@@ -139,6 +139,25 @@ test('serves the small EXIF thumbnail', async () => {
   assert.deepEqual([...r.data.subarray(-2)], [0xff, 0xd9]);
 });
 
+test('serves many thumbnails in one batch', async () => {
+  const ids = ['DSCF0001.JPG', 'DSCF0004.JPG', 'DSCF0005.MOV'].map((n) => byName(n).id);
+  const r = await api('GET', `/api/thumbs?ids=${ids.join(',')}`);
+  const buf = r.data;
+  const nl = buf.indexOf(10);
+  const index = JSON.parse(buf.subarray(0, nl).toString());
+  assert.deepEqual(index.map(([id]) => id), ids.slice(0, 2), 'videos are skipped');
+  let off = nl + 1;
+  for (const [, len] of index) {
+    const jpg = buf.subarray(off, off + len);
+    assert.deepEqual([...jpg.subarray(0, 2)], [0xff, 0xd8]);
+    assert.deepEqual([...jpg.subarray(-2)], [0xff, 0xd9]);
+    off += len;
+  }
+  assert.equal(off, buf.length);
+  const portrait = buf.subarray(nl + 1 + index[0][1], nl + 1 + index[0][1] + index[1][1]);
+  assert.equal(parseHeader(portrait).orientation, 6, 'orientation grafted on');
+});
+
 test('reads camera settings and the film recipe', async () => {
   const r = await api('GET', `/api/info/${byName('DSCF0003.JPG').id}`);
   const rows = Object.fromEntries(r.data.rows);

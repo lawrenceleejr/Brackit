@@ -260,6 +260,16 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
                 None => err(req, 404, "not found"),
             };
         }
+        if path == "/api/thumbs" {
+            let photos: Vec<Photo> = {
+                let lib = app.lib.read().unwrap();
+                params
+                    .get("ids")
+                    .map(|ids| ids.split(',').filter_map(|id| lib.photos.get(id)).filter(|p| !p.video).take(200).cloned().collect())
+                    .unwrap_or_default()
+            };
+            return serve_thumbs(req, photos);
+        }
         if let Some(id) = path.strip_prefix("/api/img/") {
             let photo = app.lib.read().unwrap().photos.get(id).cloned();
             return match photo {
@@ -500,6 +510,48 @@ fn summary(lib: &Library) -> Value {
 
 /* ------------------------------------------------------------ media */
 
+/// Read an embedded JPEG (thumbnail or preview) out of the file, with the
+/// parent photo's orientation grafted on so browsers rotate it.
+fn embedded_jpeg(p: &Photo, (start, len): (u64, u64)) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; len as usize];
+    File::open(&p.file)
+        .and_then(|mut f| {
+            f.seek(SeekFrom::Start(start))?;
+            f.read_exact(&mut buf)
+        })
+        .ok()?;
+    if p.orientation != 1 && buf.len() > 2 {
+        let seg = jpeg::orientation_segment(p.orientation);
+        let mut out = Vec::with_capacity(buf.len() + seg.len());
+        out.extend_from_slice(&buf[..2]);
+        out.extend_from_slice(&seg);
+        out.extend_from_slice(&buf[2..]);
+        buf = out;
+    }
+    Some(buf)
+}
+
+/// Many thumbnails in one response, so a whole card's worth can be fetched
+/// in a few requests. Format: one JSON line `[[id, length], …]`, a newline,
+/// then the JPEGs back to back in that order.
+fn serve_thumbs(req: Request, photos: Vec<Photo>) {
+    let mut index = Vec::with_capacity(photos.len());
+    let mut body = Vec::new();
+    for p in &photos {
+        if let Some(jpg) = p.thumb.or(p.preview).and_then(|r| embedded_jpeg(p, r)) {
+            index.push(json!([p.id, jpg.len()]));
+            body.extend_from_slice(&jpg);
+        }
+    }
+    let mut out = serde_json::to_vec(&index).unwrap_or_default();
+    out.push(b'\n');
+    out.extend_from_slice(&body);
+    let resp = Response::from_data(out)
+        .with_header(header("Content-Type", "application/octet-stream"))
+        .with_header(header("Cache-Control", "no-store"));
+    let _ = req.respond(resp);
+}
+
 #[derive(PartialEq)]
 enum Size {
     Thumb,
@@ -516,27 +568,13 @@ fn serve_image(req: Request, p: &Photo, size: Size) {
         Size::Preview => p.preview,
         Size::Full => None,
     };
-    {
-        if let Some((start, len)) = range {
-            let mut buf = vec![0u8; len as usize];
-            let ok = File::open(&p.file).and_then(|mut f| {
-                f.seek(SeekFrom::Start(start))?;
-                f.read_exact(&mut buf)
-            });
-            if ok.is_err() {
-                return err(req, 500, "could not read preview");
+    if let Some(range) = range {
+        return match embedded_jpeg(p, range) {
+            Some(buf) => {
+                let _ = req.respond(Response::from_data(buf).with_header(jpeg_type).with_header(cache));
             }
-            if p.orientation != 1 && buf.len() > 2 {
-                let seg = jpeg::orientation_segment(p.orientation);
-                let mut out = Vec::with_capacity(buf.len() + seg.len());
-                out.extend_from_slice(&buf[..2]);
-                out.extend_from_slice(&seg);
-                out.extend_from_slice(&buf[2..]);
-                buf = out;
-            }
-            let _ = req.respond(Response::from_data(buf).with_header(jpeg_type).with_header(cache));
-            return;
-        }
+            None => err(req, 500, "could not read preview"),
+        };
     }
     match File::open(&p.file) {
         Ok(f) => {

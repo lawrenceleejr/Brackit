@@ -143,9 +143,10 @@ body.fs .look .caption { opacity: .75; }
   flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center;
   margin: 12px 12px 0; cursor: zoom-in;
 }
-#solo-frame img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+/* cropped photos are canvases: they must fit exactly like images do */
+#solo-frame img, #solo-frame canvas { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 #solo.zoom #solo-frame { cursor: zoom-out; display: block; }
-#solo.zoom #solo-frame img { max-width: none; max-height: none; }
+#solo.zoom #solo-frame img, #solo.zoom #solo-frame canvas { max-width: none; max-height: none; }
 #solo-caption { justify-content: center; height: 40px; padding: 10px 0; }
 
 /* ---------- staged ---------- */
@@ -363,3 +364,31 @@ body.fs #peek { display: none; }
 #export-result .cleanup { color: var(--ink); border-bottom: 1px dotted var(--faint); }
 #export-result .cleanup:hover { color: var(--accent); }
 .quick button:disabled { color: var(--faint); cursor: default; }
+
+/* ---------- menu: every tool, with its key ---------- */
+#menu {
+  position: fixed; top: calc(var(--bar-h) - 4px); right: 12px; z-index: 60; width: 280px;
+  max-height: calc(100vh - var(--bar-h) - 16px); overflow-y: auto;
+  background: #161614; border: 1px solid var(--hair); border-radius: 4px; padding: 6px 0;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.menu-sec + .menu-sec { border-top: 1px solid var(--hair); margin-top: 4px; padding-top: 4px; }
+.menu-title { color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: 6px 14px 3px; }
+.menu-item { display: flex; justify-content: space-between; width: 100%; padding: 5px 14px; text-align: left; color: var(--ink); }
+.menu-item:hover:not(:disabled) { background: #22211e; }
+.menu-item:disabled { color: var(--faint); cursor: default; }
+.menu-item .menu-key { color: var(--muted); font-size: 11px; }
+.menu-item:disabled .menu-key { color: var(--faint); }
+.menu-item.on .menu-label::before { content: "✓ "; color: var(--accent); }
+
+/* crop & straighten button: in each caption, shown on hover; always in the inspect view */
+.caption .tool { color: var(--muted); font-size: 11px; border-bottom: 1px dotted var(--faint); opacity: 0; transition: opacity .15s; }
+.look:hover .caption .tool, #solo-caption .tool { opacity: 1; }
+.caption .tool:hover { color: var(--ink); }
+
+/* histogram: word-sized in each caption, larger in the inspect view's corner */
+.caption .hist-mini { align-self: center; flex: none; }
+#solo-hist {
+  position: absolute; right: 24px; bottom: 56px; z-index: 2; pointer-events: none;
+  background: rgba(13, 13, 12, 0.72); border-radius: 3px; padding: 6px; box-sizing: content-box;
+}

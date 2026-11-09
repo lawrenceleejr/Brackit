@@ -19,6 +19,7 @@
       <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
       <button id="staged-btn" class="link" title="Staged for export (S)">Staged <span id="staged-count" class="num">0</span></button>
       <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
+      <button id="menu-btn" class="link" title="All tools">Menu</button>
       <button id="help-btn" class="link" title="Shortcuts (?)">?</button>
     </div>
   </header>
@@ -160,6 +161,7 @@
         <dt>Z</dt><dd>actual pixels (large view)</dd>
         <dt>C</dt><dd>straighten &amp; crop (large view)</dd>
         <dt>I</dt><dd>camera settings &amp; film recipe</dd>
+        <dt>H</dt><dd>histogram</dd>
         <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
         <dt>space</dt><dd>play / pause (video)</dd>
         <dt>F</dt><dd>full screen</dd>
@@ -175,6 +177,7 @@
     </div>
   </section>
 
+  <div id="menu" hidden></div>
   <div id="toast" hidden></div>
   <script src="app.js"></script>
 </body>

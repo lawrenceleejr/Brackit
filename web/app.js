@@ -122,6 +122,7 @@ async function ejectCard(path, name) {
   });
   for (const e of imageCache.values()) drop(e);
   imageCache.clear();
+  resetThumbs();
   let res;
   try {
     res = await api('POST', '/api/eject', { path });
@@ -453,6 +454,7 @@ function scopeLabel(lib) {
 function loadLibrary(lib) {
   S.lib = lib;
   imageCache.clear();
+  resetThumbs();
   applyFilter(false);
   let saved = 0;
   try {
@@ -493,13 +495,13 @@ function applyFilter(keep = true) {
    photo you're looking at never waits behind prefetches. Decoded images are
    kept in a small LRU cache. */
 const MAX_INFLIGHT = 6; // browsers allow ~6 connections per host
-const AHEAD = 8; // sets to prefetch forward (previews)
+const AHEAD = 12; // sets to prefetch forward (full-quality previews, decoded)
 const THUMBS_AHEAD = 40; // sets to prefetch forward (tiny header thumbnails)
 const CACHE_MAX = 90; // decoded previews kept (~3 per set)
 const THUMB_CACHE_MAX = 900; // ~10 KB each
 // Lanes: background work may only use part of the connections, so whatever
 // is on screen (priority < 1) always finds a free slot immediately.
-const LANE = { thumb: 2, preview: 2 };
+const LANE = { thumb: 2, preview: 3 };
 const kindOf = (url) => (url.includes('full=1') ? 'full' : url.includes('thumb=1') ? 'thumb' : 'preview');
 const imageCache = new Map(); // url -> entry
 const queue = []; // entries waiting to start
@@ -609,37 +611,166 @@ const fullUrl = (id) => `/api/img/${id}?full=1`;
 const thumbUrl = (id) => `/api/img/${id}?thumb=1`;
 const photo = (id) => S.lib.photos[id];
 
-// Re-rank the queue around the current set; cancel what's no longer wanted.
+/* Thumbnail store. Every shot's ~10 KB header thumbnail, fetched in batches
+   of 60 per request (two at a time, beside the preview traffic) for a wide
+   window around you, mostly ahead. They're kept compressed; only the nearby
+   ones are decoded, so a placeholder is always ready the instant you flip. */
+const TH = { url: new Map(), img: new Map(), none: new Set(), loading: new Set(), q: [], inflight: 0, waiters: new Map(), gen: 0 };
+const TH_BATCH = 60;
+const TH_INFLIGHT = 2;
+const TH_AHEAD = 500; // sets ahead to fetch
+const TH_BEHIND = 80;
+const TH_DECODE_AHEAD = 40; // sets ahead to keep decoded
+const TH_URL_MAX = 4000; // compressed thumbnails kept (~40 MB)
+const TH_IMG_MAX = 300; // decoded thumbnails kept
+
+function thumbIdsAround() {
+  const ids = [];
+  const add = (set) => set && set.kind !== 'video' && ids.push(...set.photos);
+  add(S.view[S.idx]);
+  for (let d = 1; d <= 40; d++) add(S.view[S.idx + d]);
+  for (let d = 1; d <= 10; d++) add(S.view[S.idx - d]);
+  for (let d = 41; d <= TH_AHEAD; d++) add(S.view[S.idx + d]);
+  for (let d = 11; d <= TH_BEHIND; d++) add(S.view[S.idx - d]);
+  return ids;
+}
+
+function scheduleThumbs() {
+  if (!S.lib) return;
+  const urgent = TH.q.filter((id) => TH.waiters.has(id));
+  TH.q = [...urgent, ...thumbIdsAround().filter((id) => !TH.url.has(id) && !TH.none.has(id) && !TH.loading.has(id))];
+  pumpThumbs();
+  // keep the next few dozen decoded so placeholders appear synchronously
+  for (let d = -3; d <= TH_DECODE_AHEAD; d++) {
+    const set = S.view[S.idx + d];
+    if (set && set.kind !== 'video') for (const id of set.photos) if (TH.url.has(id)) thumbImage(id);
+  }
+}
+
+function pumpThumbs() {
+  while (TH.inflight < TH_INFLIGHT && TH.q.length) {
+    const batch = [];
+    while (batch.length < TH_BATCH && TH.q.length) {
+      const id = TH.q.shift();
+      if (!TH.url.has(id) && !TH.none.has(id) && !TH.loading.has(id)) batch.push(id);
+    }
+    if (!batch.length) break;
+    batch.forEach((id) => TH.loading.add(id));
+    TH.inflight++;
+    const gen = TH.gen;
+    fetch(`/api/thumbs?ids=${batch.join(',')}`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+      .then((ab) => {
+        if (gen !== TH.gen) return; // a different card/range was loaded meanwhile
+        const bytes = new Uint8Array(ab);
+        const nl = bytes.indexOf(10);
+        const index = JSON.parse(new TextDecoder().decode(bytes.subarray(0, nl)));
+        let off = nl + 1;
+        for (const [id, len] of index) {
+          TH.url.set(String(id), URL.createObjectURL(new Blob([bytes.subarray(off, off + len)], { type: 'image/jpeg' })));
+          off += len;
+        }
+        while (TH.url.size > TH_URL_MAX) {
+          const [old, u] = TH.url.entries().next().value;
+          TH.url.delete(old);
+          TH.img.delete(old);
+          URL.revokeObjectURL(u);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        TH.inflight--;
+        if (gen !== TH.gen) return pumpThumbs();
+        for (const id of batch) {
+          TH.loading.delete(id);
+          if (!TH.url.has(id)) TH.none.add(id); // no thumbnail in this file
+          const ws = TH.waiters.get(id);
+          if (ws) {
+            TH.waiters.delete(id);
+            ws.forEach((fn) => fn());
+          }
+        }
+        pumpThumbs();
+      });
+  }
+}
+
+// Decoded thumbnail for a photo (null if the file has none).
+function thumbImage(id) {
+  const have = TH.img.get(id);
+  if (have) return have.promise;
+  if (TH.none.has(id)) return Promise.resolve(null);
+  if (!TH.url.has(id)) {
+    return new Promise((resolve) => {
+      const ws = TH.waiters.get(id) || [];
+      ws.push(resolve);
+      TH.waiters.set(id, ws);
+      TH.q = TH.q.filter((x) => x !== id);
+      TH.q.unshift(id); // wanted on screen: next batch
+      pumpThumbs();
+    }).then(() => thumbImage(id));
+  }
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = TH.url.get(id);
+  const entry = { img, done: false };
+  entry.promise = img.decode().then(
+    () => ((entry.done = true), img),
+    () => null
+  );
+  TH.img.set(id, entry);
+  while (TH.img.size > TH_IMG_MAX) TH.img.delete(TH.img.keys().next().value);
+  return entry.promise;
+}
+// Photo ids are per scan: forget every thumbnail when a new card/range loads.
+function resetThumbs() {
+  TH.gen++;
+  for (const u of TH.url.values()) URL.revokeObjectURL(u);
+  TH.loading.clear();
+  TH.url.clear();
+  TH.img.clear();
+  TH.none.clear();
+  TH.q = [];
+  TH.waiters.clear();
+}
+
+const thumbReady = (id) => {
+  const e = TH.img.get(id);
+  return e && e.done ? e.img : null;
+};
+
+// Re-rank the preview queue around the current set; cancel what's no longer
+// wanted. Thumbnails are handled by the store above.
 function preloadAround() {
   const want = new Map(); // url -> priority
-  const add = (set, pr, url = previewUrl) => {
+  const add = (set, pr) => {
     if (!set || set.kind === 'video') return;
-    set.photos.forEach((id, i) => {
-      if (url === thumbUrl && !photo(id).hasThumb) return;
-      want.set(url(id), pr + i * 0.01);
-    });
+    set.photos.forEach((id, i) => want.set(previewUrl(id), pr + i * 0.01));
   };
-  // on screen: thumbnails first (instant placeholder), then the previews
-  add(S.view[S.idx], 0, thumbUrl);
   add(S.view[S.idx], 0.1);
-  // while a key is held down, only fetch what's on screen plus thumbnails
+  // while a key is held down, only the set on screen; full prefetch on release
   const ahead = S.flipping ? 0 : AHEAD;
   for (let d = 1; d <= ahead; d++) add(S.view[S.idx + d], d);
   if (!S.flipping) add(S.view[S.idx - 1], 1.5);
-  for (let d = 1; d <= THUMBS_AHEAD; d++) add(S.view[S.idx + d], 1 + d * 0.5, thumbUrl);
-  for (let d = 1; d <= 5; d++) add(S.view[S.idx - d], 2 + d, thumbUrl);
+  // inspecting: the same look in the next set at full resolution, ready to go
+  if (S.solo && !S.flipping) {
+    const next = S.view[S.idx + 1];
+    if (next && next.kind !== 'video') want.set(fullUrl(next.photos[Math.min(S.solo.pos, next.photos.length - 1)]), 1.2);
+  }
   for (const [url, e] of [...imageCache]) {
     if (e.done) continue;
     if (want.has(url)) {
       e.priority = want.get(url);
     } else if (e.kind === 'thumb' && e.started) {
       // tiny: let it finish
-    } else if (e.kind !== 'full') {
+    } else if (e.kind !== 'full' || e.priority >= 0) {
+      // (a full-resolution file being inspected right now has priority −1: keep it)
       drop(e); // stale prefetch: free the connection for what matters now
       imageCache.delete(url);
     }
   }
   for (const [url, pr] of want) getImage(url, pr);
+  scheduleThumbs();
 }
 
 /* ------------------------------------------------------------ edits (straighten & crop) */
@@ -673,6 +804,20 @@ function drawEdited(ctx, src, W, H, edit, scale, cropped) {
    the photo's true shape (Fuji thumbnails can be letterboxed) and with any
    straighten/crop applied, so it occupies exactly the space the sharp
    preview will. Drawn once per flip; cheap. */
+// Cheap placeholder: the decoded thumbnail itself, sized by CSS to the space
+// the sharp preview will take (object-fit crops any letterboxing).
+function placeholderImg(timg, p, frame) {
+  const a = photoAspect(p);
+  const maxH = S.imgMax || frame.clientHeight || 600;
+  const w = Math.max(1, Math.min(frame.clientWidth || 600, maxH * a));
+  const im = timg.cloneNode();
+  im.className = 'lowres ready';
+  im.style.width = `${Math.round(w)}px`;
+  im.style.height = `${Math.round(w / a)}px`;
+  im.style.objectFit = 'cover';
+  return im;
+}
+
 function placeholder(timg, p, edit) {
   const a = photoAspect(p);
   const c = document.createElement('canvas');
@@ -814,7 +959,18 @@ function caption(p, pos, count) {
   c.append(el('span', 'file', p.name));
   if (editOf(p)) c.append(el('span', 'edited', 'cropped'));
   if (S.exported.has(p.key)) c.append(el('span', 'exported', 'exported'));
+  if (p.kind !== 'video') c.append(cropButton(pos));
   return c;
+}
+
+function cropButton(pos) {
+  const b = el('button', 'tool', 'Crop & straighten');
+  b.title = 'Crop & straighten (C)';
+  b.onclick = (e) => {
+    e.stopPropagation();
+    openEditor(pos);
+  };
+  return b;
 }
 
 let renderToken = 0;
@@ -878,19 +1034,24 @@ function render() {
       const node = edit ? renderEdited(img, edit, frame.clientWidth * dpr() * 1.25) : img;
       node.classList.add('ready');
       frame.replaceChildren(node);
+      if (S.showHist) {
+        // a word-sized histogram in the caption, after the simulation name
+        const cap = look.querySelector('.caption');
+        const sim = cap && cap.querySelector('.sim');
+        if (sim) sim.after(histCanvas(node, 56, 14, 'hist-mini'));
+      }
     };
     if (entry.done) showPreview(entry.img); // cached: sharp immediately
     else {
-      // instant low-res stand-in from the JPEG header's thumbnail
-      if (p.hasThumb) {
-        const t = getImage(thumbUrl(id), 0);
-        const showThumb = (timg) => {
-          if (token !== renderToken || sharp || !timg.naturalWidth) return;
-          frame.replaceChildren(placeholder(timg, p, edit));
-        };
-        if (t.done) showThumb(t.img);
-        else t.promise.then(showThumb);
-      }
+      // instant low-res stand-in from the JPEG header's thumbnail (usually
+      // already decoded, so it's on screen in this same frame)
+      const showThumb = (timg) => {
+        if (token !== renderToken || sharp || !timg || !timg.naturalWidth) return;
+        frame.replaceChildren(edit ? placeholder(timg, p, edit) : placeholderImg(timg, p, frame));
+      };
+      const ready = thumbReady(id);
+      if (ready) showThumb(ready);
+      else thumbImage(id).then(showThumb);
       entry.promise.then(showPreview);
     }
   });
@@ -911,18 +1072,21 @@ function photoAspect(p) {
 }
 function layoutStage(stage, set) {
   stage.classList.remove('g21');
-  stage.style.removeProperty('--img-max');
-  if (set.photos.length !== 3 || set.kind === 'video') return;
-  const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
   const SW = stage.clientWidth;
   const SH = stage.clientHeight;
+  // tallest a photo may be (one row); known in px so placeholders can be sized
+  S.imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
+  stage.style.setProperty('--img-max', `${S.imgMax}px`);
+  if (set.photos.length !== 3 || set.kind === 'video') return;
+  const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
   const a = photoAspect(photo(set.photos[0]));
   const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
   const rowH = (SH - gap - 2 * CAPTION_H) / 2;
   const twoOne = Math.min((SW - gap) / 2, rowH * a);
   if (twoOne > inRow * 1.04) {
     stage.classList.add('g21');
-    stage.style.setProperty('--img-max', `${Math.floor(rowH)}px`);
+    S.imgMax = Math.floor(rowH);
+    stage.style.setProperty('--img-max', `${S.imgMax}px`);
   }
 }
 
@@ -1074,13 +1238,13 @@ function peekAt(e) {
     box.append(el('span', 'peek-video', '▶'));
     return;
   }
-  const entry = getImage(thumbUrl(shown.id), 0.5);
   const put = (img) => {
-    if (peekIdx !== i || !img.naturalWidth) return;
+    if (peekIdx !== i || !img || !img.naturalWidth) return;
     box.replaceChildren(img.cloneNode());
   };
-  if (entry.done) put(entry.img);
-  else entry.promise.then(put);
+  const ready = thumbReady(shown.id);
+  if (ready) put(ready);
+  else thumbImage(shown.id).then(put);
 }
 
 /* ------------------------------------------------------------ overview (thumbnail grid) */
@@ -1112,8 +1276,8 @@ function openOverview() {
         if (!en.isIntersecting) continue;
         OV.io.unobserve(en.target);
         const tile = en.target;
-        getImage(tile.dataset.src, 0.5).promise.then((img) => {
-          if (!img.naturalWidth || !tile.isConnected) return;
+        thumbImage(tile.dataset.id).then((img) => {
+          if (!img || !img.naturalWidth || !tile.isConnected) return;
           const c = img.cloneNode();
           c.alt = '';
           tile.prepend(c);
@@ -1150,7 +1314,7 @@ function openOverview() {
     tile.title = `${set.photos.map((id) => photo(id).name).join(', ')}${shown.filmSim ? ' · ' + shown.filmSim : ''}`;
     if (set.kind === 'video') tile.append(el('span', 'ov-video', '▶'));
     else {
-      tile.dataset.src = thumbUrl(shown.id); // the server falls back to the preview if a file has none
+      tile.dataset.id = shown.id;
       OV.io.observe(tile);
     }
     if (set.photos.length > 1) tile.append(el('span', 'ov-n', String(set.photos.length)));
@@ -1219,6 +1383,8 @@ function openSolo(pos, opts = {}) {
 
 function closeSolo() {
   $('#solo-info').hidden = true;
+  const sh = $('#solo-hist');
+  if (sh) sh.remove();
   const ownsFs = S.solo && S.solo.ownsFs;
   S.solo = null;
   if (ownsFs && isFullscreen()) setFullscreen(false);
@@ -1245,6 +1411,13 @@ function renderSolo() {
     node.style.transform = '';
     frame.innerHTML = '';
     frame.append(node);
+    const old = $('#solo-hist');
+    if (old) old.remove();
+    if (S.showHist) {
+      const h = histCanvas(node, 220, 64, '');
+      h.id = 'solo-hist';
+      $('#solo').append(h);
+    }
     if (S.solo.zoom) zoomTo(S.solo.zx ?? 0.5, S.solo.zy ?? 0.5);
   };
   const edit = editOf(p);
@@ -1326,6 +1499,7 @@ function renderSoloCaption() {
   c.classList.toggle('flagged', S.flags.has(p.key));
   c.append(el('span', 'sim', p.filmSim || 'Photo'), el('span', 'file', p.name));
   if (editOf(p)) c.append(el('span', 'edited', 'cropped'));
+  c.append(cropButton(S.solo.pos));
   $('#solo-caption').replaceWith(c);
 }
 
@@ -1991,9 +2165,11 @@ function onFullscreenChange(on) {
   setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
 }
 
+let fsSettleUntil = 0; // macOS animates full screen; ignore stale window state meanwhile
 async function setFullscreen(on) {
   if (on === isFullscreen()) return true;
   if (inApp()) {
+    fsSettleUntil = Date.now() + 1500;
     await api('POST', '/api/window', { cmd: 'fullscreen', on }).catch(() => null);
     appFs = on;
     onFullscreenChange(on);
@@ -2009,7 +2185,10 @@ async function setFullscreen(on) {
   }
 }
 
+// F: the full-screen switch. It never closes the inspect view: once you
+// press F, full screen is yours, so leaving the inspect view keeps it.
 function toggleFullscreen() {
+  if (S.solo) S.solo.ownsFs = false;
   setFullscreen(!isFullscreen());
 }
 
@@ -2031,6 +2210,13 @@ function bindUi() {
   bindSurvey();
   $('#staged-btn').onclick = () => openStaged();
   $('#ov-btn').onclick = () => openOverview();
+  $('#menu-btn').onclick = (e) => {
+    e.stopPropagation();
+    $('#menu').hidden ? openMenu() : closeMenu();
+  };
+  document.addEventListener('click', (e) => {
+    if (!$('#menu').hidden && !e.target.closest('#menu')) closeMenu();
+  });
   $('#eject-btn').onclick = () => S.lib && ejectCard(S.lib.root, S.lib.volume && S.lib.volume.name);
   $('#fs-btn').onclick = toggleFullscreen;
   $('#help-btn').onclick = () => ($('#help').hidden = !$('#help').hidden);
@@ -2134,7 +2320,7 @@ function bindUi() {
   const onResize = () => {
     clearTimeout(rt);
     rt = setTimeout(async () => {
-      if (inApp()) {
+      if (inApp() && Date.now() > fsSettleUntil) {
         // catch the green-button / menu full screen too
         const w = await api('POST', '/api/window', { cmd: 'state' }).catch(() => null);
         if (w && typeof w.fullscreen === 'boolean' && w.fullscreen !== appFs) {
@@ -2150,8 +2336,20 @@ function bindUi() {
   };
   window.addEventListener('resize', onResize);
   document.addEventListener('keydown', (e) => {
+    // A clicked button keeps focus, and Space/Enter would press it again on top
+    // of Brackit's own shortcut. Keys belong to Brackit, not to buttons.
+    const t = e.target;
+    if (t && (t.tagName === 'BUTTON' || (t.tagName === 'INPUT' && t.type === 'checkbox'))) {
+      t.blur();
+      if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+    }
     if (e.repeat && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) S.flipping = true;
     onKey(e);
+  });
+  // and clicking a button shouldn't leave it holding focus at all
+  document.addEventListener('mouseup', (e) => {
+    const b = e.target.closest && e.target.closest('button');
+    if (b) setTimeout(() => b.blur(), 0);
   });
   document.addEventListener('keyup', (e) => {
     if (S.flipping && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
@@ -2159,6 +2357,195 @@ function bindUi() {
       if (S.lib && !$('#viewer').hidden) preloadAround(); // resume full prefetch
     }
   });
+}
+
+/* ------------------------------------------------------------ histogram */
+
+/* H: a small histogram of what's on screen. Luminance as a soft filled
+   area, R G B as thin lines; amber marks at either end mean clipping
+   (more than 0.2 % of pixels pure black or pure white). */
+S.showHist = (() => {
+  try {
+    return localStorage.getItem('brackit:hist') === '1';
+  } catch {
+    return false;
+  }
+})();
+const histCache = new WeakMap();
+const BINS = 64;
+
+function histogramOf(src) {
+  if (histCache.has(src)) return histCache.get(src);
+  const sw = srcW(src);
+  const sh = srcH(src);
+  if (!sw || !sh) return null;
+  const w = 200;
+  const h = Math.max(1, Math.round((w * sh) / sw));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0, w, h);
+  let data;
+  try {
+    data = ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return null;
+  }
+  const r = new Float64Array(BINS);
+  const g = new Float64Array(BINS);
+  const b = new Float64Array(BINS);
+  const l = new Float64Array(BINS);
+  let lo = 0;
+  let hi = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    const R = data[i];
+    const G = data[i + 1];
+    const B = data[i + 2];
+    const L = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+    r[R >> 2]++;
+    g[G >> 2]++;
+    b[B >> 2]++;
+    l[Math.min(63, L >> 2)]++;
+    if (R <= 1 && G <= 1 && B <= 1) lo++;
+    if (R >= 254 || G >= 254 || B >= 254) hi++;
+  }
+  const out = { r, g, b, l, clipLo: lo / n > 0.002, clipHi: hi / n > 0.002 };
+  histCache.set(src, out);
+  return out;
+}
+
+function histCanvas(src, W, H, cls) {
+  const c = document.createElement('canvas');
+  c.className = 'hist' + (cls ? ' ' + cls : '');
+  c.width = Math.round(W * dpr());
+  c.height = Math.round(H * dpr());
+  c.style.width = W + 'px';
+  c.style.height = H + 'px';
+  const hs = histogramOf(src);
+  if (!hs) return c;
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr(), dpr());
+  // scale to the tallest interior bin so a spike at either end doesn't flatten the rest
+  let max = 1;
+  for (const arr of [hs.l, hs.r, hs.g, hs.b]) for (let i = 1; i < BINS - 1; i++) max = Math.max(max, arr[i]);
+  const x = (i) => (i / (BINS - 1)) * W;
+  const y = (v) => H - Math.min(1, v / max) * (H - 1);
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  for (let i = 0; i < BINS; i++) ctx.lineTo(x(i), y(hs.l[i]));
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(233, 230, 223, 0.28)';
+  ctx.fill();
+  const line = (arr, color) => {
+    ctx.beginPath();
+    for (let i = 0; i < BINS; i++) (i ? ctx.lineTo : ctx.moveTo).call(ctx, x(i), y(arr[i]));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = W > 100 ? 1 : 0.75;
+    ctx.stroke();
+  };
+  line(hs.r, 'rgba(232, 96, 80, 0.75)');
+  line(hs.g, 'rgba(110, 196, 110, 0.75)');
+  line(hs.b, 'rgba(96, 140, 232, 0.75)');
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  ctx.fillStyle = accent;
+  if (hs.clipLo) ctx.fillRect(0, 0, W > 100 ? 2 : 1.5, H);
+  if (hs.clipHi) ctx.fillRect(W - (W > 100 ? 2 : 1.5), 0, W > 100 ? 2 : 1.5, H);
+  return c;
+}
+
+function toggleHistogram() {
+  S.showHist = !S.showHist;
+  try {
+    localStorage.setItem('brackit:hist', S.showHist ? '1' : '0');
+  } catch {}
+  if (!S.lib || $('#viewer').hidden) return;
+  render();
+  if (S.solo) renderSolo();
+  toast(S.showHist ? 'Histogram on' : 'Histogram off');
+}
+
+/* ------------------------------------------------------------ menu */
+
+/* Every tool, in one list. A menu item simply replays its key through the
+   same handler, so the menu, the Mac menu bar and the keyboard can never
+   disagree. `when` says when the item applies; `on` marks toggles. */
+const inViewer = () => !!S.lib && !$('#viewer').hidden;
+const curSet = () => S.view[S.idx];
+const isPhotoSet = () => inViewer() && curSet() && curSet().kind !== 'video';
+const MENU = [
+  ['View', [
+    { id: 'inspect', label: 'Inspect look', key: 'Space', press: { key: ' ' }, when: () => inViewer() && curSet(), on: () => !!S.solo },
+    { id: 'zoom', label: 'Actual pixels', key: 'Z', press: { key: 'z' }, when: () => !!S.solo, on: () => !!(S.solo && S.solo.zoom) },
+    { id: 'overview', label: 'Overview', key: 'G', press: { key: 'g' }, when: inViewer },
+    { id: 'fullscreen', label: 'Full screen', key: 'F', press: { key: 'f' }, on: () => isFullscreen() },
+    { id: 'info', label: 'Camera settings & recipe', key: 'I', press: { key: 'i' }, when: isPhotoSet, on: () => S.showInfo },
+    { id: 'histogram', label: 'Histogram', key: 'H', press: { key: 'h' }, when: inViewer, on: () => S.showHist },
+    { id: 'brackets', label: 'Brackets only', key: 'B', press: { key: 'b' }, when: inViewer, on: () => S.bracketsOnly },
+  ]],
+  ['Photo', [
+    { id: 'pick1', label: 'Pick look 1', key: '1', press: { key: '1', code: 'Digit1' }, when: inViewer },
+    { id: 'pick2', label: 'Pick look 2', key: '2', press: { key: '2', code: 'Digit2' }, when: () => inViewer() && curSet() && curSet().photos.length > 1 },
+    { id: 'pick3', label: 'Pick look 3', key: '3', press: { key: '3', code: 'Digit3' }, when: () => inViewer() && curSet() && curSet().photos.length > 2 },
+    { id: 'unpick', label: 'Unpick this shot', key: '0', press: { key: '0', code: 'Digit0' }, when: inViewer },
+    { id: 'nextunpicked', label: 'Next unpicked shot', key: 'U', press: { key: 'u' }, when: inViewer },
+    { id: 'crop', label: 'Crop & straighten…', key: 'C', press: { key: 'c' }, when: isPhotoSet },
+    { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: inViewer },
+    { id: 'undo', label: 'Undo delete', key: '⌘Z', press: { key: 'z', metaKey: true }, when: () => !!lastDelete && Date.now() < lastDelete.until },
+  ]],
+  ['Card', [
+    { id: 'open', label: 'Choose folder, dates or card…', key: 'O', press: { key: 'o' }, when: inViewer },
+    { id: 'eject', label: 'Eject card', key: '⌘E', press: { key: 'e', metaKey: true }, when: () => !!(S.lib && S.lib.volume && S.lib.volume.ejectable) },
+  ]],
+  ['Export', [
+    { id: 'staged', label: 'Show picks', key: 'S', press: { key: 's' }, when: inViewer },
+    { id: 'export', label: 'Export picks', key: 'E', press: { key: 'e' }, when: () => inViewer() && stagedPhotos().length > 0 },
+  ]],
+  ['Help', [{ id: 'keys', label: 'Keyboard shortcuts', key: '?', press: { key: '?' } }]],
+];
+
+function runCommand(id) {
+  const item = MENU.flatMap(([, items]) => items).find((i) => i.id === id);
+  if (!item || (item.when && !item.when())) return;
+  closeMenu();
+  const pr = item.press;
+  onKey({
+    key: pr.key,
+    code: pr.code || '',
+    metaKey: !!pr.metaKey,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    repeat: false,
+    target: document.body,
+    preventDefault() {},
+  });
+}
+window.brackitCommand = runCommand; // the Mac app's menu bar calls this
+
+function openMenu() {
+  const box = $('#menu');
+  box.replaceChildren();
+  for (const [title, items] of MENU) {
+    const sec = el('div', 'menu-sec');
+    sec.append(el('div', 'menu-title', title));
+    for (const it of items) {
+      const b = el('button', 'menu-item');
+      const ok = !it.when || it.when();
+      b.disabled = !ok;
+      if (it.on && it.on()) b.classList.add('on');
+      b.append(el('span', 'menu-label', it.label), el('span', 'menu-key', it.key));
+      b.onclick = () => runCommand(it.id);
+      sec.append(b);
+    }
+    box.append(sec);
+  }
+  box.hidden = false;
+}
+function closeMenu() {
+  $('#menu').hidden = true;
 }
 
 function onKey(e) {
@@ -2179,6 +2566,12 @@ function onKey(e) {
     return;
   }
   const k = digit ? digit[1] : delKey ? 'DeleteSet' : undoKey ? 'Undo' : e.key;
+
+  if (!$('#menu').hidden && e.key === 'Escape') {
+    closeMenu();
+    return e.preventDefault();
+  }
+  if (!$('#menu').hidden) closeMenu();
 
   if (!$('#help').hidden) {
     $('#help').hidden = true;
@@ -2353,6 +2746,10 @@ function onKey(e) {
     case 'g':
     case 'G':
       openOverview();
+      break;
+    case 'h':
+    case 'H':
+      toggleHistogram();
       break;
     case 'o':
     case 'O':
