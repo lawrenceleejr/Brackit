@@ -14,6 +14,11 @@ npm run test:ui        # flip-speed test in headless Chromium (see below)
 
 `npm start` serves the UI in a browser. `npm run app` runs the Tauri app.
 
+```bash
+npm run lite           # build Brackit Lite into build/lite and serve it
+npm run test:lite      # Lite vs the desktop server on one card (part of test:ui)
+```
+
 ## Flipping must stay instant: 50 ms budget
 
 Pressing an arrow key must visibly change the screen within **50 ms**, every
@@ -41,6 +46,14 @@ Anything slower feels sluggish.
   clipping, annotations), `library.js` (export-folder Library), plus
   `index.html` / `style.css`. Embedded into the binary at build time.
 - `site/`: the Hugo website (deployed by `.github/workflows/pages.yml`).
+- **Brackit Lite** (the web version, at `/lite/` on the website): the same
+  `web/` page plus `web/lite.js`, which answers every `/api` request in the
+  browser from picked files, and `src-tauri/src/jpeg.rs` compiled to
+  WebAssembly (`lite/wasm`, via its `*_buf` functions). Built by
+  `scripts/build-lite.mjs`. Code in `web/` must keep working there: images
+  loaded with `fetch` work as is; anything that sets an `/api` URL as a
+  `src` directly goes through `mediaUrl()`. Desktop-only features check
+  `LITE` and hide with `.full-only`; Lite-only bits use `.lite-only`.
 - `test/`: server tests and the UI flip-speed test.
 
 ## Rules the code relies on

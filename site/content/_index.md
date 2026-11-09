@@ -67,6 +67,20 @@ on a photo to look closely.
   dynamic range, tone, and every other tag in the file.
 - Straighten and crop before export. The card itself is never changed.
 
+## Brackit Lite
+
+[Brackit Lite](lite/) is the same thing in a web browser, for when you're away
+from your computer, or on a computer where you can't install anything. On an
+iPhone or iPad, put the card in a card reader, open Lite in Safari and choose
+the photos from the card. Exports go to Photos or Files through the share
+sheet; in Chrome or Edge on a computer they go straight into a folder. Add it
+to your home screen and it opens like an app, without a connection too.
+
+It reads the photos with the same code as the desktop app, and nothing leaves
+your device. What it can't do is change the card: deleting the looks you
+didn't pick, ejecting, and the library of your export folder are only in the
+desktop app.
+
 There's also a library for the export folder, with 0–5 stars, a flag, and
 filters by simulation. It runs on macOS, Windows and Linux, works offline,
 and doesn't upload anything anywhere.

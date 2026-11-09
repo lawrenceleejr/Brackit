@@ -19,7 +19,8 @@ I made it for myself, but if you use film simulation bracketing too, it's
 probably useful to you as well.
 
 **[Website](https://lawrenceleejr.github.io/Brackit/)** ·
-**[Download](https://github.com/lawrenceleejr/Brackit/releases/latest)**
+**[Download](https://github.com/lawrenceleejr/Brackit/releases/latest)** ·
+**[Brackit Lite](https://lawrenceleejr.github.io/Brackit/lite/)** (in the browser, iPhone and iPad too)
 
 ![Brackit showing one shot in Classic Chrome, Classic Neg. and Acros side by side](site/static/img/brackets.jpg)
 
@@ -65,6 +66,24 @@ It's a small download (a few MB).
 
 Brackit isn't signed by Apple or Microsoft yet, which is why the first launch
 needs that extra step.
+
+### Brackit Lite, in the browser
+
+**[Brackit Lite](https://lawrenceleejr.github.io/Brackit/lite/)** runs in a
+web browser, with nothing to install: on an iPhone or iPad (with a card
+reader), or on any computer.
+
+- **iPhone, iPad:** open Lite in Safari, tap **Choose photos**, then
+  **Browse**, your card, **Select** and **Select All**. Swipe to flip, tap a
+  look to pick it, double-tap to see it large. **Export** opens the share
+  sheet: **Save to Photos**, or **Save to Files** (RAWs go to Files). Share →
+  **Add to Home Screen** makes it open like an app, offline too.
+- **Computer:** Chrome and Edge export straight into a folder you choose;
+  other browsers save to Downloads. All the keys work.
+
+Lite reads the photos with the same code as the desktop app and never uploads
+anything. It can't change the card, so deleting the looks you didn't pick,
+ejecting and the Library are desktop-only.
 
 ### Without the app window
 
@@ -149,6 +168,15 @@ npm start            # the browser version
 npm run build:cli && npm test && npm run test:ui
 ```
 
-`test:ui` checks that flipping stays under 50 ms per key press. See
+`test:ui` checks that flipping stays under 50 ms per key press, and that
+Brackit Lite reads a card exactly as the desktop app does. Lite is the same
+`web/` page plus `web/lite.js`, which answers the page's requests in the
+browser, and `jpeg.rs` compiled to WebAssembly (`lite/wasm`):
+
+```bash
+rustup target add wasm32-unknown-unknown
+npm run lite         # build Lite into build/lite and serve it
+```
+ See
 `CLAUDE.md` for notes on working on the code. Pushing a tag like `v0.1.0`
 builds every platform and publishes a release.

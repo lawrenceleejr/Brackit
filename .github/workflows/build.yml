@@ -31,7 +31,8 @@ jobs:
       - run: npm run build:cli
       - run: npm test
 
-  # Flip-speed budget: every arrow press must paint within 50 ms.
+  # Flip-speed budget: every arrow press must paint within 50 ms. Also
+  # Brackit Lite (the web version), checked against the desktop app.
   ui:
     runs-on: ubuntu-latest
     steps:
@@ -41,9 +42,13 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            lite/wasm
           key: cli
       - run: npm ci
       - run: npx playwright install --with-deps chromium

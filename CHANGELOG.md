@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Brackit Lite**
+- A web version at lawrenceleejr.github.io/Brackit/lite/: nothing to
+  install, on iPhone and iPad (with a card reader) or any computer. It reads
+  the photos with the desktop app's own code, compiled to WebAssembly, and
+  uploads nothing. Exports go to the share sheet (Save to Photos / Files), a
+  folder (Chrome, Edge) or Downloads. Works offline from the home screen.
+- Touch: swipe to flip, tap a look to pick it, double-tap to see it large. On
+  an upright phone the three looks stack in a column.
+- Deleting from the card, ejecting and the Library stay in the desktop app.
+
 **Made for the keyboard**
 - Every step now has a key: the start screen (`1`–`9` open a card, `O` a
   folder, `/` type a path), the date chooser (`←` `→` a day, `⇧` widens,

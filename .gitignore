@@ -4,3 +4,4 @@ dist/
 *.log
 lite/wasm/target/
 build/lite/
+site/static/lite/
