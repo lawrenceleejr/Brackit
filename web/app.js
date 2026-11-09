@@ -1085,7 +1085,10 @@ function layoutStage(stage, set) {
   stage.style.setProperty('--img-max', `${S.imgMax}px`);
   if (set.photos.length !== 3 || set.kind === 'video') return;
   const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
-  const a = photoAspect(photo(set.photos[0]));
+  // the shape on screen: a crop changes it
+  const p0 = photo(set.photos[0]);
+  const ed = editOf(p0);
+  const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
   const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
   const rowH = (SH - gap - 2 * CAPTION_H) / 2;
   const twoOne = Math.min((SW - gap) / 2, rowH * a);
