@@ -88,7 +88,16 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
       - run: npm ci
       - name: Build app
-        run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        # bundling downloads helper tools from GitHub releases; retry if that
+        # download hiccups (e.g. HTTP 504) rather than failing the build
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} && exit 0
+            echo "build attempt $attempt failed; retrying in 30 s"
+            sleep 30
+          done
+          exit 1
       - name: Build terminal-only binary
         shell: bash
         run: |
