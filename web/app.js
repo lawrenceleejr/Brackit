@@ -41,7 +41,7 @@ const S = {
 
 async function boot() {
   const params = new URLSearchParams(location.search);
-  if (params.get('shell') === 'electron') document.body.classList.add('electron');
+  if (params.get('shell') === 'tauri') document.body.classList.add('app');
   S.server = await api('GET', '/api/state');
   document.body.classList.add(S.server.platform);
   S.flags = new Set(S.server.flags || []);
@@ -51,7 +51,7 @@ async function boot() {
   bindUi();
   const open = params.get('open') || (S.server.root ? S.server.root : null);
   if (open) {
-    history.replaceState(null, '', location.pathname + (S.server.shell === 'electron' ? '?shell=electron' : ''));
+    history.replaceState(null, '', location.pathname + (S.server.shell === 'tauri' ? '?shell=tauri' : ''));
     showWelcome();
     return openFolder(open);
   }
@@ -460,16 +460,16 @@ function openSolo(pos, opts = {}) {
   S.solo = { pos, zoom: false, ownsFs: false };
   $('#solo').hidden = false;
   renderSolo();
-  if (opts.fullscreen && !document.fullscreenElement) {
+  if (opts.fullscreen && !isFullscreen()) {
     S.solo.ownsFs = true;
-    document.documentElement.requestFullscreen().catch(() => S.solo && (S.solo.ownsFs = false));
+    setFullscreen(true).then((ok) => !ok && S.solo && (S.solo.ownsFs = false));
   }
 }
 
 function closeSolo() {
   const ownsFs = S.solo && S.solo.ownsFs;
   S.solo = null;
-  if (ownsFs && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (ownsFs && isFullscreen()) setFullscreen(false);
   $('#solo').hidden = true;
   $('#solo').classList.remove('zoom');
   $('#solo-frame').innerHTML = '';
@@ -1045,9 +1045,39 @@ async function undoDelete() {
   toast('Restored');
 }
 
+/* Full screen: in the app the native window goes full screen (the system
+   WebView's element full screen is unreliable); in a browser, the page does. */
+const inApp = () => S.server && S.server.shell === 'tauri';
+let appFs = false;
+const isFullscreen = () => (inApp() ? appFs : !!document.fullscreenElement);
+
+function onFullscreenChange(on) {
+  document.body.classList.toggle('fs', on);
+  // leaving full screen (Esc, green button) also leaves an inspect view that entered it
+  if (!on && S.solo && S.solo.ownsFs) closeSolo();
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+}
+
+async function setFullscreen(on) {
+  if (on === isFullscreen()) return true;
+  if (inApp()) {
+    await api('POST', '/api/window', { cmd: 'fullscreen', on }).catch(() => null);
+    appFs = on;
+    onFullscreenChange(on);
+    return true;
+  }
+  try {
+    if (on) await document.documentElement.requestFullscreen();
+    else await document.exitFullscreen();
+    return true;
+  } catch {
+    if (on) toast('Full screen unavailable');
+    return false;
+  }
+}
+
 function toggleFullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch(() => toast('Full screen unavailable'));
+  setFullscreen(!isFullscreen());
 }
 
 function videoEl() {
@@ -1073,7 +1103,20 @@ function bindUi() {
   $('#export').onclick = doExport;
   $('#clear-flags').onclick = () => {
     const items = stagedPhotos();
-    if (!items.length || !confirm(`Unstage all ${items.length}?`)) return;
+    const btn = $('#clear-flags');
+    if (!items.length) return;
+    if (!btn.dataset.armed) {
+      // ask by relabelling the button rather than a modal dialog
+      btn.dataset.armed = '1';
+      btn.textContent = `Unstage all ${items.length}?`;
+      setTimeout(() => {
+        delete btn.dataset.armed;
+        btn.textContent = 'Clear';
+      }, 3000);
+      return;
+    }
+    delete btn.dataset.armed;
+    btn.textContent = 'Clear';
     for (const p of items) S.flags.delete(p.key);
     saveFlags();
     updateFlagsUi();
@@ -1114,12 +1157,8 @@ function bindUi() {
   $('#edit-cancel').onclick = () => closeEditor(false);
   $('#edit-done').onclick = () => closeEditor(true);
 
-  document.addEventListener('fullscreenchange', () => {
-    document.body.classList.toggle('fs', !!document.fullscreenElement);
-    // Esc in full screen is swallowed by the browser; treat it as "back"
-    if (!document.fullscreenElement && S.solo && S.solo.ownsFs) closeSolo();
-    setTimeout(onResize, 50);
-  });
+  // browser: Esc in full screen is swallowed by the browser itself
+  document.addEventListener('fullscreenchange', () => onFullscreenChange(!!document.fullscreenElement));
   let chromeTimer = null;
   document.addEventListener('mousemove', (e) => {
     if (!document.body.classList.contains('fs')) return;
@@ -1132,7 +1171,15 @@ function bindUi() {
   let rt = null;
   const onResize = () => {
     clearTimeout(rt);
-    rt = setTimeout(() => {
+    rt = setTimeout(async () => {
+      if (inApp()) {
+        // catch the green-button / menu full screen too
+        const w = await api('POST', '/api/window', { cmd: 'state' }).catch(() => null);
+        if (w && typeof w.fullscreen === 'boolean' && w.fullscreen !== appFs) {
+          appFs = w.fullscreen;
+          return onFullscreenChange(appFs);
+        }
+      }
       drawTicks();
       if (S.editor) layoutEditor();
       else if (!$('#viewer').hidden) render();
@@ -1264,7 +1311,7 @@ function onKey(e) {
       break;
     case 'Escape':
       if (S.solo) closeSolo();
-      else if (document.fullscreenElement) document.exitFullscreen();
+      else if (isFullscreen()) setFullscreen(false);
       break;
     case 'f':
     case 'F':

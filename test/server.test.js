@@ -1,0 +1,169 @@
+'use strict';
+// Black-box tests of the Rust server (`brackit --serve`), using synthetic
+// Fujifilm-shaped JPEGs from fixture.js and the reference parser in
+// jpeg-reader.js to check outputs. Build first: cargo build --release
+// --no-default-features --manifest-path src-tauri/Cargo.toml
+
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
+const { parseHeader } = require('./jpeg-reader');
+const { buildJpeg } = require('./fixture');
+
+const BIN = process.env.BRACKIT_BIN || path.join(__dirname, '..', 'src-tauri', 'target', 'release', process.platform === 'win32' ? 'brackit.exe' : 'brackit');
+
+let proc;
+let base;
+let card;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brackit-'));
+
+async function api(method, url, body, raw) {
+  const r = await fetch(base + url, {
+    method,
+    headers: body && !raw ? { 'Content-Type': 'application/json' } : undefined,
+    body: raw ? body : body ? JSON.stringify(body) : undefined,
+  });
+  return { status: r.status, data: r.headers.get('content-type')?.startsWith('application/json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
+}
+
+test.before(async () => {
+  card = path.join(tmp, 'card');
+  const dcim = path.join(card, 'DCIM', '100_FUJI');
+  fs.mkdirSync(dcim, { recursive: true });
+  const shots = [
+    ['DSCF0001.JPG', '2026:11:01 10:00:00', 0x600, 1],
+    ['DSCF0002.JPG', '2026:11:01 10:00:00', 0x800, 1],
+    ['DSCF0003.JPG', '2026:11:01 10:00:00', 0xb00, 1],
+    ['DSCF0004.JPG', '2026:11:01 10:00:05', 0x000, 6],
+    ['DSCF0006.JPG', '2026:11:01 10:01:00', 0x600, 1],
+    ['DSCF0007.JPG', '2026:11:01 10:01:00', null, 1, 0x501],
+    ['DSCF0008.JPG', '2026:11:01 10:01:00', 0xa00, 1],
+  ];
+  for (const [n, dt, fm, orientation, saturation] of shots) {
+    fs.writeFileSync(path.join(dcim, n), buildJpeg({ dateTime: dt, filmMode: fm ?? undefined, saturation, orientation }));
+  }
+  const mov = path.join(dcim, 'DSCF0005.MOV');
+  fs.writeFileSync(mov, Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 256)));
+  fs.utimesSync(mov, new Date(2026, 10, 1, 10, 0, 30), new Date(2026, 10, 1, 10, 0, 30));
+  fs.writeFileSync(path.join(dcim, '._DSCF0001.JPG'), Buffer.alloc(10));
+
+  proc = spawn(BIN, ['--serve', '--no-open', '--port', '0'], { env: { ...process.env, HOME: tmp, USERPROFILE: tmp } });
+  base = await new Promise((resolve, reject) => {
+    let out = '';
+    proc.stdout.on('data', (d) => {
+      out += d;
+      const m = out.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+      if (m) resolve(`http://127.0.0.1:${m[1]}`);
+    });
+    proc.on('error', reject);
+    setTimeout(() => reject(new Error('server did not start: ' + out)), 5000);
+  });
+});
+
+test.after(() => proc && proc.kill());
+
+let lib;
+const byName = (n) => Object.values(lib.photos).find((p) => p.name === n);
+
+test('groups brackets, labels film sims, keeps singles and videos apart', async () => {
+  const r = await api('POST', '/api/open', { path: card });
+  assert.equal(r.status, 200);
+  lib = r.data;
+  assert.deepEqual(
+    lib.sets.map((s) => s.photos.map((id) => lib.photos[id].name)),
+    [['DSCF0001.JPG', 'DSCF0002.JPG', 'DSCF0003.JPG'], ['DSCF0004.JPG'], ['DSCF0005.MOV'], ['DSCF0006.JPG', 'DSCF0007.JPG', 'DSCF0008.JPG']]
+  );
+  assert.equal(lib.sets[2].kind, 'video');
+  assert.deepEqual(lib.sets[0].photos.map((id) => lib.photos[id].filmSim), ['Classic Chrome', 'Classic Neg.', 'Reala Ace']);
+  assert.deepEqual(lib.sets[3].photos.map((id) => lib.photos[id].filmSim), ['Classic Chrome', 'Acros + R', 'Nostalgic Neg.']);
+  const p = byName('DSCF0001.JPG');
+  assert.equal(p.key, `DSCF0001.JPG:${p.size}:2026:11:01 10:00:00`);
+  assert.equal(p.hasPreview, true);
+  assert.equal(byName('DSCF0004.JPG').orientation, 6);
+});
+
+test('serves the embedded preview, with orientation grafted on', async () => {
+  const r = await api('GET', `/api/img/${byName('DSCF0004.JPG').id}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.data[0], 0xff);
+  assert.equal(r.data[1], 0xd8);
+  assert.equal(parseHeader(r.data).orientation, 6);
+  const full = await api('GET', `/api/img/${byName('DSCF0004.JPG').id}?full=1`);
+  assert.deepEqual(full.data, fs.readFileSync(path.join(card, 'DCIM/100_FUJI/DSCF0004.JPG')));
+});
+
+test('streams video with byte ranges', async () => {
+  const id = byName('DSCF0005.MOV').id;
+  const r = await fetch(`${base}/api/img/${id}`, { headers: { Range: 'bytes=10-19' } });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get('content-range'), 'bytes 10-19/1000');
+  assert.deepEqual([...Buffer.from(await r.arrayBuffer())], [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+});
+
+test('exports originals byte-for-byte and skips ones already there', async () => {
+  const dest = path.join(tmp, 'out');
+  const ids = [byName('DSCF0002.JPG').id, byName('DSCF0005.MOV').id];
+  const r = await api('POST', '/api/export', { dest, ids });
+  const lines = r.data.toString().trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(lines.at(-1), { finished: true, copied: 2, skipped: 0, failed: [], dest });
+  assert.deepEqual(fs.readFileSync(path.join(dest, 'DSCF0002.JPG')), fs.readFileSync(path.join(card, 'DCIM/100_FUJI/DSCF0002.JPG')));
+  const again = await api('POST', '/api/export', { dest, ids });
+  assert.equal(JSON.parse(again.data.toString().trim().split('\n').at(-1)).skipped, 2);
+  const st = (await api('GET', '/api/state')).data;
+  assert.ok(st.exported.includes(byName('DSCF0002.JPG').key));
+});
+
+test('edited export keeps EXIF + film sim, resets orientation and size', async () => {
+  const dest = path.join(tmp, 'out2');
+  const encoded = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
+  const id = byName('DSCF0004.JPG').id;
+  const r = await api('POST', `/api/export-edited?id=${id}&dest=${encodeURIComponent(dest)}&w=4000&h=3000`, encoded, true);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const out = fs.readFileSync(path.join(dest, 'DSCF0004.JPG'));
+  const m = parseHeader(out);
+  assert.equal(m.filmSim, 'Provia');
+  assert.equal(m.orientation, 1);
+  assert.equal(m.width, 4000);
+  assert.equal(m.height, 3000);
+  assert.equal(m.dateTime, '2026:11:01 10:00:05');
+  assert.equal(out[3], 0xe1); // JFIF APP0 replaced by EXIF APP1
+});
+
+test('flags and edits persist', async () => {
+  await api('PUT', '/api/flags', { flags: ['a', 'b'] });
+  await api('PUT', '/api/edits', { edits: { a: { angle: 1.5, crop: { x: 0, y: 0, w: 1, h: 1 } } } });
+  const st = (await api('GET', '/api/state')).data;
+  assert.deepEqual(st.flags, ['a', 'b']);
+  assert.equal(st.edits.a.angle, 1.5);
+  const saved = JSON.parse(fs.readFileSync(path.join(tmp, '.brackit', 'state.json'), 'utf8'));
+  assert.deepEqual(saved.flags, ['a', 'b']);
+});
+
+test('delete moves a set off the card and undo restores it', async () => {
+  const dir = path.join(card, 'DCIM', '100_FUJI');
+  const ids = lib.sets[0].photos;
+  const before = fs.readdirSync(dir).sort();
+  const r = await api('POST', '/api/delete', { ids });
+  assert.equal(r.status, 200);
+  assert.ok(!fs.existsSync(path.join(dir, 'DSCF0001.JPG')));
+  assert.ok(!fs.existsSync(path.join(dir, '._DSCF0001.JPG')), 'AppleDouble sidecar goes too');
+  assert.ok(fs.existsSync(path.join(card, '.brackit-trash')));
+  const u = await api('POST', '/api/undo-delete', { token: r.data.token });
+  assert.equal(u.status, 200);
+  assert.deepEqual(fs.readdirSync(dir).sort(), before);
+  assert.ok(!fs.existsSync(path.join(card, '.brackit-trash')));
+  const again = await api('POST', '/api/undo-delete', { token: r.data.token });
+  assert.equal(again.status, 410);
+});
+
+test('rejects requests for other hosts', async () => {
+  const http = require('http');
+  const status = await new Promise((resolve) => {
+    const u = new URL(base);
+    http.get({ host: u.hostname, port: u.port, path: '/api/state', headers: { Host: 'evil.example' } }, (res) => resolve(res.statusCode));
+  });
+  assert.equal(status, 403);
+});

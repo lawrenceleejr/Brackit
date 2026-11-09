@@ -38,7 +38,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   -webkit-app-region: drag;
   transition: opacity .25s;
 }
-body.electron.darwin #bar { padding-left: 84px; }
 #bar button { -webkit-app-region: no-drag; }
 #bar .left, #bar .right { display: flex; gap: 18px; align-items: center; }
 #bar .right { justify-content: flex-end; }
