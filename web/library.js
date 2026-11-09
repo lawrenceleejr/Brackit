@@ -117,6 +117,14 @@ function renderLibFilters(all) {
   for (let n = 1; n <= 5; n++) chip('★'.repeat(n) + '+', f.stars === n, () => (f.stars = f.stars === n ? 0 : n), `${n} stars or more`);
   const sims = [...new Set(all.map((p) => p.filmSim).filter(Boolean))].sort();
   for (const s of sims) chip(s, f.sim === s, () => (f.sim = f.sim === s ? null : s));
+  // the same filters from the keyboard
+  const keys = el('span', 'lib-keys');
+  const k = (key, what) => keys.append(el('kbd', '', key), ` ${what}  `);
+  k('⇧P', 'flagged');
+  k('⇧1–5', 'stars');
+  k('T', 'simulation');
+  k('[ ]', 'folder');
+  box.append(keys);
 }
 
 function renderLibFolders(all) {
@@ -472,6 +480,30 @@ function libraryKey(e, k) {
     return true;
   }
   if (cmd) return false;
+  // ⇧ + number / P / T / [ ]: the filters
+  const f = LIB.filter;
+  const refilter = (fn) => {
+    fn();
+    LIB.cursor = 0;
+    renderLibrary();
+    return true;
+  };
+  if (/^[0-5]$/.test(k) && e.shiftKey && !LIB.view) return refilter(() => (f.stars = Number(k) === f.stars ? 0 : Number(k)));
+  if ((k === 'P' || k === 'p') && e.shiftKey && !LIB.view) return refilter(() => (f.flag = !f.flag));
+  if ((k === 't' || k === 'T') && !LIB.view) {
+    const sims = [...new Set(libAll().map((x) => x.filmSim).filter(Boolean))].sort();
+    if (!sims.length) return true;
+    // cycle through the simulations, then back to all of them
+    const i = sims.indexOf(f.sim);
+    return refilter(() => (f.sim = i + 1 < sims.length ? sims[i + 1] : null));
+  }
+  if ((k === '[' || k === ']') && !LIB.view) {
+    const folders = [...document.querySelectorAll('#lib-folders .lib-folder')];
+    if (folders.length < 2) return true;
+    const i = Math.max(0, folders.findIndex((b) => b.classList.contains('on')));
+    folders[(i + (k === ']' ? 1 : -1) + folders.length) % folders.length].click();
+    return true;
+  }
   if (/^[0-5]$/.test(k) && p) {
     setStars(p, Number(k));
     return true;

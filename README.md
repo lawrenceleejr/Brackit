@@ -11,6 +11,10 @@ SD card, shows them side by side with the simulation's name under each, and
 you press `1`, `2` or `3` to keep the one you want. Then it copies just those
 off the card.
 
+It's made for the keyboard. Every step, from choosing the card to ejecting it,
+is a key, so you can go through a few hundred shots without reaching for the
+mouse. Every button in the app shows its key, and `?` lists them all.
+
 I made it for myself, but if you use film simulation bracketing too, it's
 probably useful to you as well.
 
@@ -21,6 +25,9 @@ probably useful to you as well.
 
 ## What it does
 
+- **Keyboard first.** Arrows to flip, `1` `2` `3` to pick, `Space` to look
+  closely, `E` to export. The start screen, the date chooser, the crop tool,
+  the picks, the library and the menu all work from the keys too.
 - **Brackets side by side.** Each shutter press is one set of three looks, in
   a row or two-over-one, whichever shows them bigger. The film simulation is
   read from the camera's own metadata.
@@ -73,8 +80,8 @@ standalone `brackit-cli-…` binaries for each system on the releases page.
 
 ## How to use it
 
-1. **Put the SD card in** and open Brackit. Click your card (or choose any
-   folder).
+1. **Put the SD card in** and open Brackit. Press the card's number (or `O`
+   to choose any folder).
 2. **Choose what to look at.** Brackit shows the card's folders and a chart of
    how many shots you took each day. If you've imported from this card
    before, *New since last import* is already selected, so just press `Enter`.
@@ -103,12 +110,13 @@ can eject the card and carry on later.
 | `J` | clipping: red = blown highlights, blue = crushed shadows |
 | `A` | annotations: focus point and faces |
 | `I` | camera settings, film recipe, all metadata |
-| `C` | straighten and crop |
+| `C` | straighten and crop: `[` `]` straighten, arrows move, `−` `+` resize, `1`–`6` aspect, `Enter` done |
 | `G` | overview of every set |
-| `S` / `E` | show picks / export picks |
-| `L` | library of the export folder; there `0`–`5` stars, `P` flag |
+| `S` / `E` | show picks / export picks; in picks `R` adds RAW, `D` changes the folder, `X` clears unpicked looks after export |
+| `L` | library of the export folder; there `0`–`5` stars, `P` flag, `⇧1`–`5` / `⇧P` / `T` / `[` `]` filter |
 | `⌘⌫` / `Ctrl+Backspace` | delete this set from the card (undo for 10 s with `⌘Z` / `Ctrl+Z`) |
-| `O` | choose another folder, dates or card |
+| `O` | choose another folder, dates or card; there `←` `→` choose a day (`⇧` widens), `[` `]` a folder, `Enter` opens |
+| `M` | the menu (`↑` `↓` `Enter`) |
 | `⌘E` / `Ctrl+E` | eject the card |
 | `F` | full screen |
 | `?` | all keys |

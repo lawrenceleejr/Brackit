@@ -17,6 +17,25 @@ I vibe coded it on the Shinkansen from Kanazawa to Tokyo, after one too many
 evenings of flipping through stacks of triple JPEGs. I made it for myself, but
 if you bracket film simulations too, you'll probably find it useful.
 
+## Made for the keyboard
+
+The whole thing works without the mouse: choosing the card and the days,
+flipping, picking, looking closely, cropping, exporting, clearing the card and
+ejecting it. One hand on the arrows, the other on 1, 2 and 3. That is what
+makes a few hundred shots go quickly. Every button in the app shows its key,
+and <kbd>?</kbd> lists them all.
+
+<dl class="keys">
+  <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>next or previous shot</dd>
+  <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>keep that look (<kbd>⌘</kbd> + number to keep more than one)</dd>
+  <dt><kbd>Space</kbd></dt><dd>the pick full screen</dd>
+  <dt><kbd>Z</kbd> <kbd>`</kbd> <kbd>H</kbd> <kbd>J</kbd></dt><dd>actual pixels, loupe, histogram, clipping</dd>
+  <dt><kbd>C</kbd></dt><dd>straighten and crop</dd>
+  <dt><kbd>E</kbd></dt><dd>copy the picks off the card</dd>
+  <dt><kbd>⌘</kbd> <kbd>⌫</kbd></dt><dd>delete a shot from the card (with undo)</dd>
+  <dt><kbd>⌘</kbd> <kbd>E</kbd></dt><dd>eject</dd>
+</dl>
+
 ## How it works
 
 1. Put the card in and open Brackit. Pick a folder or a few days, or just the

@@ -4,7 +4,7 @@ title = "Brackit"
 disableKinds = ["taxonomy", "term", "RSS", "section"]
 
 [params]
-  description = "Review Fujifilm film simulation brackets side by side, pick one, copy it off the card."
+  description = "Review Fujifilm film simulation brackets side by side, pick one, copy it off the card. All from the keyboard."
   repo = "https://github.com/lawrenceleejr/Brackit"
   latest = "https://github.com/lawrenceleejr/Brackit/releases/latest"
 

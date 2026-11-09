@@ -81,11 +81,15 @@ async function showWelcome() {
   if (S.server.lastRoot && !entries.some((e) => e.path === S.server.lastRoot)) {
     entries.push({ name: S.server.lastRoot.split('/').filter(Boolean).pop() || '/', path: S.server.lastRoot, where: 'last opened' });
   }
-  for (const v of entries) {
+  entries.forEach((v, i) => {
     const row = el('div', 'volume-row');
     const b = el('button', 'volume');
     const where = el('span', 'where', v.where === 'card' ? v.path : v.where);
-    b.append(el('span', 'name', v.name), where);
+    const name = el('span', 'name');
+    if (i < 9) name.append(el('kbd', '', String(i + 1)));
+    name.append(v.name);
+    b.append(name, where);
+    b.dataset.n = i + 1;
     b.onclick = () => openFolder(v.path);
     row.append(b);
     if (v.ejectable) {
@@ -96,7 +100,7 @@ async function showWelcome() {
       row.append(ej);
     }
     box.append(row);
-  }
+  });
   $('#path-input').value = '';
 }
 
@@ -193,7 +197,8 @@ function showSurvey(sv) {
   const newBtn = $('#survey-quick [data-q="new"]');
   newBtn.hidden = !since;
   if (since) {
-    newBtn.textContent = since.count ? `New since last import (${fmtN(since.count)})` : 'Nothing new since last import';
+    newBtn.textContent = since.count ? `New since last import (${fmtN(since.count)}) ` : 'Nothing new since last import';
+    if (since.count) newBtn.append(el('kbd', '', 'N'));
     newBtn.disabled = !since.count;
     // straight to what's new: Enter opens just the shots you haven't imported
     if (since.count) {
@@ -387,6 +392,34 @@ function quickRange(q) {
   else if (q === 'week') setRange(fmtDayUTC(parseDay(last) - 6 * dayMs), last);
 }
 
+// Keyboard range: ← → select one shooting day at a time; with ⇧ the range
+// grows or shrinks at its end. Days without shots are skipped.
+function stepDay(d, widen) {
+  const days = SV.days.map((x) => x.day);
+  if (!days.length) return;
+  const whole = !SV.from && !SV.to && !SV.after;
+  if (!widen) {
+    const at = whole ? (d > 0 ? -1 : days.length) : days.indexOf(SV.to || SV.from);
+    const base = at === -1 && !whole ? days.findIndex((x) => x >= (SV.to || SV.from)) : at;
+    const i = clamp(base + d, 0, days.length - 1);
+    return setRange(days[i], days[i]);
+  }
+  const from = SV.from || days[0];
+  let to = SV.to || days.at(-1);
+  let i = days.indexOf(to);
+  if (i === -1) i = days.findIndex((x) => x >= to);
+  const lo = days.findIndex((x) => x >= from);
+  i = clamp(i + d, Math.max(0, lo), days.length - 1);
+  setRange(from, days[i]);
+}
+
+function stepSurveyFolder(d) {
+  const chips = [...document.querySelectorAll('#survey-folders .chip')];
+  if (chips.length < 2 || $('#survey-folders-row').hidden) return;
+  const i = chips.findIndex((c) => c.dataset.folder === SV.folder);
+  chips[(i + d + chips.length) % chips.length].click();
+}
+
 function bindSurvey() {
   const svg = $('#survey-chart');
   svg.addEventListener('pointerdown', (e) => {
@@ -485,6 +518,7 @@ function loadLibrary(lib) {
   $('#bar .center').hidden = false;
   $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = false;
   $('#eject-btn').hidden = !(lib.volume && lib.volume.ejectable);
+  $('#key-hint').hidden = keysLearned();
   $('#folder').textContent = scopeLabel(lib);
   $('#folder').hidden = false;
   $('#folder').title = lib.root + ' — choose another card, folder or dates (O)';
@@ -1074,6 +1108,7 @@ function selectOnly(pos) {
   });
   saveFlags();
   updateFlagsUi();
+  learnKeys();
   return true;
 }
 
@@ -1085,6 +1120,7 @@ function toggleFlag(pos) {
   else S.flags.add(p.key);
   saveFlags();
   updateFlagsUi();
+  learnKeys();
   return true;
 }
 
@@ -2012,6 +2048,32 @@ function setAngle(a) {
   drawEditor();
 }
 
+// Crop from the keyboard: arrows move the box, − + resize it about its centre
+// (keeping a locked aspect ratio).
+function nudgeCrop(k, step) {
+  const ed = S.editor;
+  if (!ed || !ed.img) return;
+  const c = ed.crop;
+  const dx = k === 'ArrowLeft' ? -step : k === 'ArrowRight' ? step : 0;
+  const dy = k === 'ArrowUp' ? -step : k === 'ArrowDown' ? step : 0;
+  ed.crop = { ...c, x: clamp(c.x + dx, 0, 1 - c.w), y: clamp(c.y + dy, 0, 1 - c.h) };
+  drawEditor();
+}
+
+function scaleCrop(f) {
+  const ed = S.editor;
+  if (!ed || !ed.img) return;
+  const c = ed.crop;
+  // one factor for both sides keeps the shape; never past the photo's edge
+  const k = clamp(f, 0.04 / Math.min(c.w, c.h), 1 / Math.max(c.w, c.h));
+  const w = c.w * k;
+  const h = c.h * k;
+  const cx = c.x + c.w / 2;
+  const cy = c.y + c.h / 2;
+  ed.crop = { x: clamp(cx - w / 2, 0, 1 - w), y: clamp(cy - h / 2, 0, 1 - h), w, h };
+  drawEditor();
+}
+
 function bindCropDrag() {
   const box = $('#crop-box');
   const MIN = 0.04;
@@ -2274,6 +2336,9 @@ async function doExport() {
       tick();
     }
     for (const p of items) if (!failed.some((f) => f.name === p.name)) S.exported.add(p.key);
+    try {
+      if (copied) localStorage.setItem('brackit:keysLearned', '1'); // the key hint has done its job
+    } catch {}
     bar.style.width = '100%';
     $('#export-progress').classList.add('done');
     result.innerHTML = '';
@@ -2289,6 +2354,7 @@ async function doExport() {
     if (unpicked.length) {
       const clean = el('button', 'cleanup', `Delete ${fmtN(unpicked.length)} unpicked look${unpicked.length === 1 ? '' : 's'} from the card`);
       clean.title = 'The looks you didn\'t pick in these sets. Your picks and RAW files stay. Undo for 10 s.';
+      clean.append(' ', el('kbd', '', 'X'));
       clean.onclick = () => {
         clean.remove();
         cleanUpCard(items);
@@ -2906,7 +2972,21 @@ function runCommand(id) {
 }
 window.brackitCommand = runCommand; // the Mac app's menu bar calls this
 
-function openMenu() {
+// A quiet reminder of the main keys under the photos, until the first pick
+// (and never again once something has been exported).
+function keysLearned() {
+  try {
+    return localStorage.getItem('brackit:keysLearned') === '1';
+  } catch {
+    return false;
+  }
+}
+function learnKeys() {
+  const h = $('#key-hint');
+  if (h) h.hidden = true;
+}
+
+function openMenu(fromKey) {
   const box = $('#menu');
   box.replaceChildren();
   for (const [title, items] of MENU) {
@@ -2924,6 +3004,15 @@ function openMenu() {
     box.append(sec);
   }
   box.hidden = false;
+  if (fromKey) menuStep(1);
+}
+// ↑ ↓ move through the enabled menu items; ↵ runs the focused one
+function menuStep(d) {
+  const items = [...document.querySelectorAll('#menu .menu-item:not(:disabled)')];
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  const next = i === -1 ? (d > 0 ? 0 : items.length - 1) : (i + d + items.length) % items.length;
+  items[next].focus();
 }
 function closeMenu() {
   $('#menu').hidden = true;
@@ -2951,11 +3040,21 @@ function onKey(e) {
   // the Library takes the keys it knows; inspection tools still work there
   if (typeof libraryKey === 'function' && libraryKey(e, k)) return e.preventDefault();
 
-  if (!$('#menu').hidden && e.key === 'Escape') {
+  if (!$('#menu').hidden) {
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      menuStep(k === 'ArrowDown' ? 1 : -1);
+      return e.preventDefault();
+    }
+    if (k === 'Enter' && document.activeElement && document.activeElement.classList.contains('menu-item')) {
+      document.activeElement.click();
+      return e.preventDefault();
+    }
     closeMenu();
+    if (k === 'Escape' || k === 'm' || k === 'M') return e.preventDefault();
+  } else if ((k === 'm' || k === 'M') && !S.editor) {
+    openMenu(true);
     return e.preventDefault();
   }
-  if (!$('#menu').hidden) closeMenu();
 
   if (!$('#help').hidden) {
     $('#help').hidden = true;
@@ -2992,6 +3091,10 @@ function onKey(e) {
     else if (k === '[' || k === '{') setAngle(S.editor.angle - (e.shiftKey ? 1 : 0.1));
     else if (k === ']' || k === '}') setAngle(S.editor.angle + (e.shiftKey ? 1 : 0.1));
     else if (k === 'r' || k === 'R') $('#edit-reset').click();
+    else if (/^[1-6]$/.test(k)) setAspect(['free', 'orig', '1', '1.25', '1.7778', '2.39'][Number(k) - 1]);
+    else if (k.startsWith('Arrow')) nudgeCrop(k, e.shiftKey ? 0.05 : 0.01);
+    else if (k === '-' || k === '_') scaleCrop(e.shiftKey ? 0.9 : 0.98);
+    else if (k === '=' || k === '+') scaleCrop(e.shiftKey ? 1.1 : 1.02);
     else return;
     return e.preventDefault();
   }
@@ -3013,6 +3116,11 @@ function onKey(e) {
   if (!$('#staged').hidden) {
     if (k === 'Escape' || k === 's' || k === 'S') closeStaged();
     else if (k === 'Enter' || k === 'e' || k === 'E') doExport();
+    else if ((k === 'r' || k === 'R') && !$('#raw-opt').hidden) {
+      $('#with-raw').checked = !$('#with-raw').checked;
+      $('#with-raw').onchange();
+    } else if (k === 'd' || k === 'D') $('#dest').click();
+    else if ((k === 'x' || k === 'X') && $('#export-result .cleanup')) $('#export-result .cleanup').click();
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -3025,6 +3133,18 @@ function onKey(e) {
     else if (k === 'l' || k === 'L') quickRange('last');
     else if (k === 'w' || k === 'W') quickRange('week');
     else if (k === 'n' || k === 'N') quickRange('new');
+    else if (k === 'ArrowLeft' || k === 'ArrowRight') stepDay(k === 'ArrowRight' ? 1 : -1, e.shiftKey);
+    else if (k === '[' || k === ']') stepSurveyFolder(k === ']' ? 1 : -1);
+    else if (k === 'f' || k === 'F') toggleFullscreen();
+    else return;
+    return e.preventDefault();
+  }
+
+  if (!$('#welcome').hidden) {
+    const n = /^[1-9]$/.test(k) && document.querySelector(`#volumes .volume[data-n="${k}"]`);
+    if (n) n.click();
+    else if (k === 'o' || k === 'O') $('#choose').click();
+    else if (k === '/') $('#path-input').focus();
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();

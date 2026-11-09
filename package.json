@@ -2,7 +2,7 @@
   "name": "brackit",
   "productName": "Brackit",
   "version": "0.1.0",
-  "description": "Review Fujifilm film-simulation brackets side by side and pick the look you want.",
+  "description": "Review Fujifilm film-simulation brackets side by side and pick the look you want, entirely from the keyboard.",
   "license": "MIT",
   "author": "Lawrence Lee",
   "repository": "github:lawrenceleejr/brackit",

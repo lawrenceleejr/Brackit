@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+**Made for the keyboard**
+- Every step now has a key: the start screen (`1`–`9` open a card, `O` a
+  folder, `/` type a path), the date chooser (`←` `→` a day, `⇧` widens,
+  `[` `]` folders), the crop tool (arrows move, `−` `+` resize, `1`–`6`
+  aspect), picks (`R` RAW, `D` folder, `X` clear unpicked looks), the library
+  filters (`⇧1`–`5`, `⇧P`, `T`, `[` `]`) and the menu (`M`, `↑` `↓` `Enter`).
+- Buttons show their keys, a reminder of the main keys sits under the photos
+  until your first pick, and `?` is now a grouped sheet of every key.
+
 ## 0.1.0
 
 The first public release.
