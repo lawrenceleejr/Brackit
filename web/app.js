@@ -130,6 +130,7 @@ function loadLibrary(lib) {
   $('#folder').textContent = lib.root;
   $('#folder').title = lib.root + ' — open another (O)';
   render();
+  updateFlagsUi();
 }
 
 function applyFilter(keep = true) {
@@ -399,7 +400,7 @@ function drawTicks() {
   const step = w / n;
   const tw = Math.max(1, Math.min(2, step - 1));
   const css = getComputedStyle(document.documentElement);
-  const faint = css.getPropertyValue('--faint').trim();
+  const faint = css.getPropertyValue('--tick').trim();
   const accent = css.getPropertyValue('--accent').trim();
   const ink = css.getPropertyValue('--ink').trim();
   for (let i = 0; i < n; i++) {
@@ -407,7 +408,7 @@ function drawTicks() {
     const flagged = set.photos.some((id) => S.flags.has(photo(id).key));
     const x = Math.floor(i * step + (step - tw) / 2);
     ctx.fillStyle = flagged ? accent : faint;
-    const th = flagged ? 12 : set.kind === 'video' ? 9 : 5;
+    const th = flagged ? 13 : set.kind === 'video' ? 9 : 6;
     ctx.fillRect(x, h - th, tw, th);
   }
   const x = Math.floor(S.idx * step + (step - tw) / 2);
@@ -808,6 +809,7 @@ async function doExport() {
   const bar = $('#export-progress div');
   const result = $('#export-result');
   $('#export').disabled = true;
+  $('#export-progress').classList.remove('done');
   result.textContent = 'Exporting…';
   const total = items.length;
   let done = 0;
@@ -865,6 +867,7 @@ async function doExport() {
     }
     for (const p of items) if (!failed.some((f) => f.name === p.name)) S.exported.add(p.key);
     bar.style.width = '100%';
+    $('#export-progress').classList.add('done');
     result.innerHTML = '';
     const bits = [`Copied ${copied}`];
     if (skipped) bits.push(`${skipped} already there`);
