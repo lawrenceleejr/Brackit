@@ -13,8 +13,9 @@ card, puts them next to each other with the simulation's name underneath, and
 lets me keep the one I want with a single key. Then it copies my picks off the
 card and leaves the rest.
 
-I made it for myself. If you bracket film simulations too, you'll probably
-find it useful.
+I vibe coded it on the Shinkansen from Kanazawa to Tokyo, after one too many
+evenings of flipping through stacks of triple JPEGs. I made it for myself, but
+if you bracket film simulations too, you'll probably find it useful.
 
 ## How it works
 
