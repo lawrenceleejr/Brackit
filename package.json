@@ -1,0 +1,71 @@
+{
+  "name": "brackit",
+  "productName": "Brackit",
+  "version": "0.1.0",
+  "description": "Review Fujifilm film-simulation brackets side by side and pick the look you want.",
+  "main": "electron/main.js",
+  "bin": {
+    "brackit": "bin/brackit.js"
+  },
+  "license": "MIT",
+  "author": "Lawrence Lee",
+  "repository": "github:lawrenceleejr/brackit",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "server",
+    "web",
+    "electron"
+  ],
+  "scripts": {
+    "start": "node bin/brackit.js",
+    "app": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.lawrenceleejr.brackit",
+    "productName": "Brackit",
+    "files": [
+      "electron/**",
+      "server/**",
+      "web/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "mac": {
+      "category": "public.app-category.photography",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "Brackit"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Graphics"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+  }
+}

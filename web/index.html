@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brackit</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="bar">
+    <div class="left">
+      <span class="mark">Brackit</span>
+      <button id="folder" class="link" title="Open another folder (O)"></button>
+    </div>
+    <div class="center"><span id="counter"></span></div>
+    <div class="right">
+      <button id="staged-btn" class="link" title="Staged for export (S)">Staged <span id="staged-count" class="num">0</span></button>
+      <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
+      <button id="help-btn" class="link" title="Shortcuts (?)">?</button>
+    </div>
+  </header>
+
+  <main id="welcome" hidden>
+    <div class="welcome-inner">
+      <h1>Brackit</h1>
+      <p class="lede">Film-simulation brackets, side by side.</p>
+      <div id="volumes"></div>
+      <div class="actions">
+        <button id="choose" class="btn">Choose folder…</button>
+      </div>
+      <form id="path-form" class="path-form">
+        <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Volumes/Untitled">
+        <button class="btn quiet" type="submit">Open</button>
+      </form>
+      <div id="scan-status" class="muted"></div>
+    </div>
+  </main>
+
+  <main id="viewer" hidden>
+    <section id="stage"></section>
+    <footer id="index">
+      <div id="index-meta"><span id="set-date"></span><span id="set-files" class="muted"></span></div>
+      <canvas id="ticks" height="22"></canvas>
+    </footer>
+  </main>
+
+  <section id="solo" hidden>
+    <div id="solo-frame"></div>
+    <div id="solo-caption" class="caption"></div>
+  </section>
+
+  <section id="editor" hidden>
+    <div id="editor-area">
+      <div id="editor-wrap">
+        <canvas id="editor-canvas"></canvas>
+        <div id="crop-box">
+          <div class="thirds"></div>
+          <div class="h nw" data-h="nw"></div><div class="h n" data-h="n"></div><div class="h ne" data-h="ne"></div>
+          <div class="h e" data-h="e"></div><div class="h se" data-h="se"></div><div class="h s" data-h="s"></div>
+          <div class="h sw" data-h="sw"></div><div class="h w" data-h="w"></div>
+        </div>
+      </div>
+    </div>
+    <div id="editor-controls">
+      <div class="straighten">
+        <span class="label muted">Straighten</span>
+        <input id="angle" type="range" min="-15" max="15" step="0.05" value="0">
+        <span id="angle-val" class="num">0.0°</span>
+      </div>
+      <div id="aspects" class="aspects">
+        <button data-a="free" class="on">Free</button>
+        <button data-a="orig">Original</button>
+        <button data-a="1">1:1</button>
+        <button data-a="1.25">4:5</button>
+        <button data-a="1.7778">16:9</button>
+        <button data-a="2.39">2.39:1</button>
+      </div>
+      <div class="editor-actions">
+        <button id="edit-reset" class="btn quiet">Reset</button>
+        <button id="edit-cancel" class="btn quiet">Cancel</button>
+        <button id="edit-done" class="btn primary">Done</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="staged" hidden>
+    <div class="staged-head">
+      <div>
+        <h2>Staged for export</h2>
+        <div id="staged-summary" class="muted"></div>
+      </div>
+      <div class="staged-actions">
+        <span class="muted">to</span>
+        <button id="dest" class="link dest" title="Change destination"></button>
+        <button id="clear-flags" class="btn quiet">Clear</button>
+        <button id="export" class="btn primary">Export</button>
+        <button id="staged-close" class="link close" title="Close (Esc)">×</button>
+      </div>
+    </div>
+    <div id="export-progress"><div></div></div>
+    <div id="export-result" class="muted"></div>
+    <div id="staged-grid"></div>
+  </section>
+
+  <section id="help" hidden>
+    <div class="help-inner">
+      <h2>Keys</h2>
+      <dl>
+        <dt>← →</dt><dd>previous / next set</dd>
+        <dt>⇧ ← →</dt><dd>jump ten sets</dd>
+        <dt>1 2 3</dt><dd>flag a look for export</dd>
+        <dt>click</dt><dd>view one look large</dd>
+        <dt>↑ ↓</dt><dd>cycle looks (large view)</dd>
+        <dt>Z</dt><dd>actual pixels (large view)</dd>
+        <dt>C</dt><dd>straighten &amp; crop (large view)</dd>
+        <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
+        <dt>space</dt><dd>play / pause video</dd>
+        <dt>F</dt><dd>full screen</dd>
+        <dt>S</dt><dd>staged photos &amp; export</dd>
+        <dt>B</dt><dd>brackets only / all photos</dd>
+        <dt>U</dt><dd>jump to next unflagged set</dd>
+        <dt>O</dt><dd>open another folder</dd>
+        <dt>Esc</dt><dd>back</dd>
+      </dl>
+    </div>
+  </section>
+
+  <div id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
