@@ -177,6 +177,19 @@ function showSurvey(sv) {
   SV.data = sv;
   SV.folder = '';
   SV.from = SV.to = null;
+  SV.after = null;
+  const since = sv.sinceLast;
+  const newBtn = $('#survey-quick [data-q="new"]');
+  newBtn.hidden = !since;
+  if (since) {
+    newBtn.textContent = since.count ? `New since last import (${fmtN(since.count)})` : 'Nothing new since last import';
+    newBtn.disabled = !since.count;
+    // straight to what's new: Enter opens just the shots you haven't imported
+    if (since.count) {
+      SV.after = since.after;
+      SV.from = since.firstDay;
+    }
+  }
   $('#welcome').hidden = true;
   $('#viewer').hidden = true;
   $('#survey').hidden = false;
@@ -222,6 +235,7 @@ function surveyDays() {
 }
 
 function selectedDays() {
+  // (with 'since last import' the first day is partly old; counts come from the server)
   return SV.days.filter((d) => (!SV.from || d.day >= SV.from) && (!SV.to || d.day <= SV.to));
 }
 
@@ -230,20 +244,28 @@ function renderSurvey() {
   document.querySelectorAll('#survey-folders .chip').forEach((c) => c.classList.toggle('on', c.dataset.folder === SV.folder));
   drawSurveyChart();
   const sel = selectedDays();
-  const photos = sel.reduce((a, d) => a + d.photos, 0);
-  const videos = sel.reduce((a, d) => a + d.videos, 0);
+  let photos = sel.reduce((a, d) => a + d.photos, 0);
+  let videos = sel.reduce((a, d) => a + d.videos, 0);
+  if (SV.after && !SV.folder) {
+    // exact count of files newer than the last import
+    photos = SV.data.sinceLast.count;
+    videos = 0;
+  }
   let range = 'All days';
   if (SV.from || SV.to) {
     const a = SV.from || SV.days[0]?.day;
     const b = SV.to || SV.days.at(-1)?.day;
     range = a === b ? niceDay(a) : `${niceDay(a, a.slice(0, 4) !== b.slice(0, 4))} – ${niceDay(b)}`;
   }
-  const parts = [range, `${fmtN(photos)} photo${photos === 1 ? '' : 's'}`];
+  if (SV.after) range = 'New since last import';
+  const parts = [range, `${fmtN(photos)} ${SV.after && !SV.folder ? 'new' : 'photo' + (photos === 1 ? '' : 's')}`];
   if (videos) parts.push(`${fmtN(videos)} video${videos === 1 ? '' : 's'}`);
   $('#survey-sel').textContent = parts.join(' · ');
   $('#survey-open').textContent = `Open ${fmtN(photos + videos)}`;
   $('#survey-open').disabled = photos + videos === 0;
-  document.querySelectorAll('#survey-quick button').forEach((b) => b.classList.toggle('on', b.dataset.q === 'all' && !SV.from && !SV.to));
+  document
+    .querySelectorAll('#survey-quick button')
+    .forEach((b) => b.classList.toggle('on', (b.dataset.q === 'all' && !SV.from && !SV.to && !SV.after) || (b.dataset.q === 'new' && !!SV.after)));
 }
 
 /* Shots per day as a strip of bars on a true time axis (empty days are
@@ -324,6 +346,7 @@ function chartDayAt(clientX) {
 }
 
 function setRange(a, b) {
+  SV.after = null; // a hand-picked range replaces 'since last import'
   if (a && b && a > b) [a, b] = [b, a];
   const whole = !a || !b || (a <= SV.days[0]?.day && b >= SV.days.at(-1)?.day);
   SV.from = whole ? null : a;
@@ -335,6 +358,14 @@ function quickRange(q) {
   const days = SV.days;
   if (!days.length) return;
   const last = days.at(-1).day;
+  if (q === 'new') {
+    const since = SV.data.sinceLast;
+    if (!since || !since.count) return;
+    SV.from = since.firstDay;
+    SV.to = null;
+    SV.after = since.after;
+    return renderSurvey();
+  }
   if (q === 'all') setRange(null, null);
   else if (q === 'last') setRange(last, last);
   else if (q === 'week') setRange(fmtDayUTC(parseDay(last) - 6 * dayMs), last);
@@ -372,7 +403,7 @@ async function openScoped() {
   if (!SV.data) return;
   const token = ++openToken;
   const status = $('#survey-status');
-  const scope = { folder: SV.folder || null, from: SV.from, to: SV.to };
+  const scope = { folder: SV.folder || null, from: SV.from, to: SV.to, after: SV.after || null };
   $('#survey-open').disabled = true;
   status.textContent = 'Reading…';
   let polling = true;
@@ -406,7 +437,8 @@ function scopeLabel(lib) {
   const name = lib.root.split(/[\\/]/).filter(Boolean).pop() || lib.root;
   const parts = [name];
   if (sc.folder) parts.push(sc.folder.split('/').pop());
-  if (sc.from || sc.to) {
+  if (sc.after) parts.push('new since last import');
+  else if (sc.from || sc.to) {
     const a = sc.from || '…';
     const b = sc.to || '…';
     parts.push(a === b ? niceDay(a) : `${a === '…' ? a : niceDay(a, false)} – ${b === '…' ? b : niceDay(b)}`);
@@ -1182,6 +1214,7 @@ function openSolo(pos, opts = {}) {
 }
 
 function closeSolo() {
+  $('#solo-info').hidden = true;
   const ownsFs = S.solo && S.solo.ownsFs;
   S.solo = null;
   if (ownsFs && isFullscreen()) setFullscreen(false);
@@ -1201,6 +1234,7 @@ function renderSolo() {
   const solo = $('#solo');
   solo.classList.toggle('zoom', !!S.solo.zoom);
   renderSoloCaption();
+  renderInfo();
   const show = (node) => {
     if (token !== soloToken) return;
     node.style.width = '';
@@ -1225,6 +1259,39 @@ function renderSolo() {
     frame.dataset.id = id;
     show(edit ? renderEdited(full, edit) : full);
   });
+}
+
+/* I: camera settings and the film recipe of the look on screen, as a small
+   table over the bottom-left of the inspect view. */
+const infoCache = new Map();
+S.showInfo = (() => {
+  try {
+    return localStorage.getItem('brackit:info') === '1';
+  } catch {
+    return false;
+  }
+})();
+async function renderInfo() {
+  const box = $('#solo-info');
+  const set = S.view[S.idx];
+  if (!S.solo || !S.showInfo || !set) return (box.hidden = true);
+  const id = set.photos[S.solo.pos];
+  let rows = infoCache.get(id);
+  if (!rows) {
+    rows = (await api('GET', `/api/info/${id}`).catch(() => ({ rows: [] }))).rows;
+    infoCache.set(id, rows);
+  }
+  if (!S.solo || set.photos[S.solo.pos] !== id) return;
+  box.replaceChildren();
+  for (const [k, v] of rows) box.append(el('span', 'k', k), el('span', 'v', v));
+  box.hidden = !rows.length;
+}
+function toggleInfo() {
+  S.showInfo = !S.showInfo;
+  try {
+    localStorage.setItem('brackit:info', S.showInfo ? '1' : '0');
+  } catch {}
+  renderInfo();
 }
 
 // Caption for the inspect view: a key per look — the one on screen is
@@ -1692,6 +1759,16 @@ async function doExport() {
     reveal.title = 'Show in Finder';
     reveal.onclick = () => api('POST', '/api/reveal', { path: S.dest });
     result.append(reveal);
+    const unpicked = unpickedIn(items.filter((p) => !failed.some((f) => f.name === p.name)));
+    if (unpicked.length) {
+      const clean = el('button', 'cleanup', `Delete ${fmtN(unpicked.length)} unpicked look${unpicked.length === 1 ? '' : 's'} from the card`);
+      clean.title = 'The looks you didn\'t pick in these sets. Your picks and RAW files stay. Undo for 10 s.';
+      clean.onclick = () => {
+        clean.remove();
+        cleanUpCard(items);
+      };
+      result.append(el('span', 'muted', '   ·   '), clean);
+    }
     render();
     renderStaged(); // written photos lose their outline; the folder list updates
   } catch (e) {
@@ -1795,7 +1872,7 @@ function toast(msg, opts = {}) {
 
 /* ------------------------------------------------------------ delete from card */
 
-let lastDelete = null; // {token, set, li, flagged, until}
+let lastDelete = null; // {token, until, restore}: the latest delete, undoable for a few seconds
 
 async function deleteSet() {
   const set = S.view[S.idx];
@@ -1820,7 +1897,18 @@ async function deleteSet() {
     if (!next || next.kind === 'video') closeSolo();
     else S.solo.pos = selectedPos(next) ?? Math.min(S.solo.pos, next.photos.length - 1);
   }
-  lastDelete = { token: res.token, set, li, flagged, until: Date.now() + res.undoMs };
+  lastDelete = {
+    token: res.token,
+    until: Date.now() + res.undoMs,
+    restore() {
+      S.lib.sets.splice(Math.min(li, S.lib.sets.length), 0, set);
+      for (const k of flagged) S.flags.add(k);
+      if (flagged.length) saveFlags();
+      applyFilter(false);
+      const i = S.view.indexOf(set);
+      if (i >= 0) S.idx = i;
+    },
+  };
   render();
   updateFlagsUi();
   const label = names.length > 1 ? `${names[0]} – ${names[names.length - 1]}` : names[0];
@@ -1836,15 +1924,54 @@ async function undoDelete() {
   } catch (e) {
     return toast(e.message, { ms: 3500 });
   }
-  S.lib.sets.splice(Math.min(d.li, S.lib.sets.length), 0, d.set);
-  for (const k of d.flagged) S.flags.add(k);
-  if (d.flagged.length) saveFlags();
-  applyFilter(false);
-  const i = S.view.indexOf(d.set);
-  if (i >= 0) S.idx = i;
+  d.restore();
   render();
   updateFlagsUi();
+  if (!$('#staged').hidden) renderStaged();
   toast('Restored');
+}
+
+/* After an export: offer to delete, from the card, the looks you didn't pick
+   in the sets you just exported. Picks and RAW files stay; 10 s undo. */
+function unpickedIn(items) {
+  const sets = new Set();
+  for (const p of items) {
+    const set = S.lib.sets.find((s) => s.photos.includes(p.id));
+    if (set && set.photos.length > 1) sets.add(set);
+  }
+  const out = [];
+  for (const set of sets) for (const id of set.photos) if (!S.flags.has(photo(id).key)) out.push({ set, id });
+  return out;
+}
+
+async function cleanUpCard(items) {
+  const doomed = unpickedIn(items);
+  if (!doomed.length) return;
+  let res;
+  try {
+    res = await api('POST', '/api/delete', { ids: doomed.map((d) => d.id), keepRaw: true });
+  } catch (e) {
+    return toast(e.message, { ms: 3500 });
+  }
+  const before = new Map(); // set -> its photo list, for undo
+  for (const { set, id } of doomed) {
+    if (!before.has(set)) before.set(set, set.photos.slice());
+    set.photos = set.photos.filter((x) => x !== id);
+  }
+  lastDelete = {
+    token: res.token,
+    until: Date.now() + res.undoMs,
+    restore() {
+      for (const [set, photos] of before) set.photos = photos;
+    },
+  };
+  render();
+  drawTicks();
+  toast(`Deleted ${fmtN(doomed.length)} unpicked look${doomed.length === 1 ? '' : 's'} from the card`, {
+    action: undoDelete,
+    label: 'Undo ⌘Z',
+    ms: res.undoMs - 300,
+  });
 }
 
 /* Full screen: in the app the native window goes full screen (the system
@@ -2096,6 +2223,7 @@ function onKey(e) {
     else if (k === 'a' || k === 'A') quickRange('all');
     else if (k === 'l' || k === 'L') quickRange('last');
     else if (k === 'w' || k === 'W') quickRange('week');
+    else if (k === 'n' || k === 'N') quickRange('new');
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -2177,6 +2305,15 @@ function onKey(e) {
     case 'z':
     case 'Z':
       if (S.solo) toggleZoom();
+      break;
+    case 'i':
+    case 'I':
+      if (S.solo) toggleInfo();
+      else if (set && set.kind !== 'video') {
+        S.showInfo = false;
+        openSolo(selectedPos(set) ?? S.hoverPos ?? 0);
+        toggleInfo();
+      }
       break;
     case 'c':
     case 'C':

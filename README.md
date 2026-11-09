@@ -33,9 +33,11 @@ The download is under 2 MB.
 
 1. **Put your SD card in.** Open Brackit and click your card.
 2. **Choose what to look at.** You'll see your card's folders and a chart of
-   how many shots you took each day. Drag across the days you want, or pick
-   **Last day** or **Last 7 days**, then press **Open**. On a full card this is
-   much quicker than loading everything.
+   how many shots you took each day. If you've imported from this card
+   before, **New since last import** is already selected, so just press
+   **Open**. Or drag across the days you want, or pick **Last day** or
+   **Last 7 days**. On a full card this is much quicker than loading
+   everything.
 3. **Flip through with ← →.** Each bracket appears as three photos with the
    film simulation under each.
 4. **Pick with 1, 2 or 3.** The pick gets an orange outline. Want two looks
@@ -49,6 +51,10 @@ The download is under 2 MB.
    files too, and press **Export**. Next time, just press `E` from anywhere
    to export straight away.
 
+   After an export, Brackit offers to **delete the looks you didn't pick**
+   from the card, in the shots you just exported. Your picks and RAW files
+   stay, and you have 10 seconds to undo.
+
 Your picks are remembered, so you can eject the card and carry on later.
 
 ## Handy extras
@@ -57,6 +63,11 @@ Your picks are remembered, so you can eject the card and carry on later.
   horizon, drag the corners to crop, and pick a shape (3:2, 1:1, 4:5, 16:9…).
   The card is never changed. The crop is applied to the copy when you export,
   and your camera details and film simulation are kept.
+- **Camera settings and film recipe:** press `I` while inspecting a photo to
+  see the shutter speed, aperture, ISO and exposure compensation, plus the
+  recipe the camera used: film simulation, grain, Color Chrome, FX Blue,
+  white balance and shift, dynamic range, highlight, shadow, color,
+  sharpness, noise reduction and clarity.
 - **Overview:** press `G` to see every shot as a small thumbnail, grouped by
   day. It's the quickest way to find your place.
 - **Delete from the card:** `⌘⌫` deletes all versions of a photo (all three
@@ -78,6 +89,7 @@ Your picks are remembered, so you can eject the card and carry on later.
 | `↑` `↓` | switch looks while inspecting |
 | `Z` | actual pixels while inspecting |
 | `C` | straighten & crop |
+| `I` | camera settings & film recipe |
 | `G` | overview of all shots |
 | `S` | see your picks |
 | `E` | export everything you've picked |

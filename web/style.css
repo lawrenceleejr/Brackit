@@ -351,3 +351,15 @@ body.fs #peek { display: none; }
 .volume { position: relative; }
 .volume .eject { margin-left: 14px; color: var(--muted); padding: 0 2px; }
 .volume .eject:hover { color: var(--ink); }
+
+/* camera settings & film recipe over the inspect view (I) */
+#solo-info {
+  position: absolute; left: 24px; bottom: 56px; z-index: 2; pointer-events: none;
+  display: grid; grid-template-columns: auto auto; gap: 3px 16px; padding: 12px 14px;
+  background: rgba(13, 13, 12, 0.82); border-radius: 3px; font-size: 11.5px;
+}
+#solo-info .k { color: var(--muted); }
+#solo-info .v { color: var(--ink); }
+#export-result .cleanup { color: var(--ink); border-bottom: 1px dotted var(--faint); }
+#export-result .cleanup:hover { color: var(--accent); }
+.quick button:disabled { color: var(--faint); cursor: default; }

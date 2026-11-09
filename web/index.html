@@ -55,7 +55,7 @@
       <div class="survey-row">
         <div class="survey-label">
           Shots per day <span class="muted">— drag to choose a range</span>
-          <span id="survey-quick" class="quick"><button data-q="all">All</button><button data-q="last">Last day</button><button data-q="week">Last 7 days</button></span>
+          <span id="survey-quick" class="quick"><button data-q="new" hidden></button><button data-q="all">All</button><button data-q="last">Last day</button><button data-q="week">Last 7 days</button></span>
         </div>
         <svg id="survey-chart" preserveAspectRatio="none"></svg>
       </div>
@@ -82,6 +82,7 @@
 
   <section id="solo" hidden>
     <div id="solo-frame"></div>
+    <div id="solo-info" hidden></div>
     <div id="solo-caption" class="caption"></div>
   </section>
 
@@ -158,6 +159,7 @@
         <dt>↑ ↓</dt><dd>cycle looks (large view)</dd>
         <dt>Z</dt><dd>actual pixels (large view)</dd>
         <dt>C</dt><dd>straighten &amp; crop (large view)</dd>
+        <dt>I</dt><dd>camera settings &amp; film recipe</dd>
         <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
         <dt>space</dt><dd>play / pause (video)</dd>
         <dt>F</dt><dd>full screen</dd>
