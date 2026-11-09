@@ -359,3 +359,68 @@ test('cleanup delete can keep the RAW', async () => {
   await api('POST', '/api/undo-delete', { token: r.data.token });
   assert.equal(fs.readdirSync(d).length, 4);
 });
+
+test('all metadata: every tag, focus point and faces for annotations', async () => {
+  const c4 = path.join(tmp, 'card4');
+  const d = path.join(c4, 'DCIM', '100_FUJI');
+  fs.mkdirSync(d, { recursive: true });
+  const shorts = (...v) => {
+    const b = Buffer.alloc(2 * v.length);
+    v.forEach((x, i) => b.writeUInt16LE(x, i * 2));
+    return { type: 3, count: v.length, value: b };
+  };
+  fs.writeFileSync(
+    path.join(d, 'DSCF0401.JPG'),
+    buildJpeg({
+      dateTime: '2026:10:22 09:00:00',
+      filmMode: 0x800,
+      exifExtra: [{ tag: 0x8827, type: 3, count: 1, value: 800 }],
+      makerExtra: [
+        { tag: 0x1023, ...shorts(3864, 2576) }, // focus pixel
+        { tag: 0x4100, type: 3, count: 1, value: 1 },
+        { tag: 0x4103, ...shorts(1000, 800, 1600, 1500) }, // one face
+        { tag: 0x1431, type: 4, count: 1, value: 4 }, // in-camera rating
+      ],
+    })
+  );
+  const l = (await api('POST', '/api/open', { path: c4 })).data;
+  const p = Object.values(l.photos)[0];
+  assert.equal(p.camRating, 4, 'in-camera rating is read at scan time');
+  const m = (await api('GET', `/api/meta/${p.id}`)).data;
+  const byName = Object.fromEntries(m.tags.map((t) => [`${t.group}:${t.name}`, t.value]));
+  assert.equal(byName['Image:Make'], 'FUJIFILM');
+  assert.equal(byName['Image:Model'], 'X100VI');
+  assert.equal(byName['Exif:ISO'], '800');
+  assert.equal(byName['Exif:Date/time original'], '2026:10:22 09:00:00');
+  assert.equal(byName['Fujifilm:Film mode'], '2048');
+  assert.equal(byName['Fujifilm:Focus pixel'], '3864 2576');
+  assert.deepEqual(m.focus, [3864, 2576]);
+  assert.deepEqual(m.faces, [[1000, 800, 1600, 1500]]);
+  assert.equal(m.width, 7728);
+  assert.equal(m.rating, 4);
+});
+
+test('export-folder library: browse, rate, flag, move to trash', async () => {
+  const outDir = path.join(tmp, 'out'); // has files from the export tests
+  const r = await api('POST', '/api/out/open', { path: outDir });
+  assert.equal(r.status, 200);
+  const names = Object.values(r.data.photos).map((p) => p.name).sort();
+  assert.ok(names.includes('DSCF0002.JPG'), names.join(','));
+  const p = Object.values(r.data.photos).find((x) => x.name === 'DSCF0002.JPG');
+  const img = await api('GET', `/api/img/${p.id}?src=out&thumb=1`);
+  assert.deepEqual([...img.data.subarray(0, 2)], [0xff, 0xd8], 'images are served from the export folder');
+  await api('POST', '/api/rate', { key: p.key, stars: 4 });
+  await api('POST', '/api/rate', { key: p.key, flag: true });
+  let st = (await api('GET', '/api/state')).data;
+  assert.equal(st.ratings[p.key], 4);
+  assert.deepEqual(st.flagged, [p.key]);
+  await api('POST', '/api/rate', { key: p.key, stars: 0, flag: false });
+  st = (await api('GET', '/api/state')).data;
+  assert.equal(st.ratings[p.key], undefined);
+  assert.deepEqual(st.flagged, []);
+  const t = (await api('POST', '/api/out/trash', { ids: [p.id] })).data;
+  assert.deepEqual(t.failed, []);
+  assert.deepEqual(t.moved, [p.id]);
+  assert.ok(!fs.existsSync(path.join(outDir, 'DSCF0002.JPG')), 'file left the export folder');
+  assert.equal((await api('POST', '/api/out/open', { path: path.join(tmp, 'nope') })).status, 404);
+});

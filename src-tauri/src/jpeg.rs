@@ -21,6 +21,8 @@ pub struct Meta {
     pub preview: Option<(u64, u64)>,
     /// Byte range of the EXIF IFD1 thumbnail JPEG (~160px).
     pub thumb: Option<(u64, u64)>,
+    /// In-camera rating (0–5), if set on the camera.
+    pub rating: Option<u32>,
 }
 
 fn film_mode(v: u32) -> Option<&'static str> {
@@ -163,6 +165,7 @@ fn parse_fuji_makernote(buf: &[u8], start: usize, len: usize, out: &mut Meta) {
     }
     let t = Tiff { buf, base: start, little: true };
     let ifd = t.ifd(t.u32(8) as usize);
+    out.rating = t.num(Tiff::find(&ifd, 0x1431)).filter(|r| (1..=5).contains(r));
     let fm = t.num(Tiff::find(&ifd, 0x1401));
     let sat = t.num(Tiff::find(&ifd, 0x1003));
     out.film_sim = match (sat.and_then(mono_mode), fm) {
@@ -670,4 +673,325 @@ pub fn shot_info(path: &Path) -> Vec<(String, String)> {
         rows.push(("Clarity".into(), signed(v as f64 / 1000.0)));
     }
     rows
+}
+
+/* ------------------------------------------------------------ all metadata */
+
+fn exif_name(group: &str, tag: u16) -> Option<&'static str> {
+    Some(match (group, tag) {
+        ("GPS", 0x0000) => "GPS version",
+        ("GPS", 0x0001) => "GPS latitude ref",
+        ("GPS", 0x0002) => "GPS latitude",
+        ("GPS", 0x0003) => "GPS longitude ref",
+        ("GPS", 0x0004) => "GPS longitude",
+        ("GPS", 0x0005) => "GPS altitude ref",
+        ("GPS", 0x0006) => "GPS altitude",
+        ("GPS", 0x0007) => "GPS time stamp",
+        ("GPS", 0x001d) => "GPS date stamp",
+        ("GPS", _) => return None,
+        (_, 0x010f) => "Make",
+        (_, 0x0110) => "Model",
+        (_, 0x0112) => "Orientation",
+        (_, 0x011a) => "X resolution",
+        (_, 0x011b) => "Y resolution",
+        (_, 0x0128) => "Resolution unit",
+        (_, 0x0131) => "Software",
+        (_, 0x0132) => "Modify date",
+        (_, 0x013b) => "Artist",
+        (_, 0x0213) => "YCbCr positioning",
+        (_, 0x8298) => "Copyright",
+        (_, 0x829a) => "Exposure time",
+        (_, 0x829d) => "F-number",
+        (_, 0x8822) => "Exposure program",
+        (_, 0x8827) => "ISO",
+        (_, 0x8830) => "Sensitivity type",
+        (_, 0x8832) => "Recommended exposure index",
+        (_, 0x9000) => "Exif version",
+        (_, 0x9003) => "Date/time original",
+        (_, 0x9004) => "Create date",
+        (_, 0x9010) => "Offset time",
+        (_, 0x9011) => "Offset time original",
+        (_, 0x9012) => "Offset time digitized",
+        (_, 0x9101) => "Components configuration",
+        (_, 0x9102) => "Compressed bits per pixel",
+        (_, 0x9201) => "Shutter speed value",
+        (_, 0x9202) => "Aperture value",
+        (_, 0x9203) => "Brightness value",
+        (_, 0x9204) => "Exposure compensation",
+        (_, 0x9205) => "Max aperture value",
+        (_, 0x9207) => "Metering mode",
+        (_, 0x9208) => "Light source",
+        (_, 0x9209) => "Flash",
+        (_, 0x920a) => "Focal length",
+        (_, 0x9286) => "User comment",
+        (_, 0x9290) => "Sub-sec time",
+        (_, 0x9291) => "Sub-sec time original",
+        (_, 0x9292) => "Sub-sec time digitized",
+        (_, 0xa000) => "FlashPix version",
+        (_, 0xa001) => "Color space",
+        (_, 0xa002) => "Image width",
+        (_, 0xa003) => "Image height",
+        (_, 0xa20e) => "Focal plane X resolution",
+        (_, 0xa20f) => "Focal plane Y resolution",
+        (_, 0xa210) => "Focal plane resolution unit",
+        (_, 0xa217) => "Sensing method",
+        (_, 0xa300) => "File source",
+        (_, 0xa301) => "Scene type",
+        (_, 0xa401) => "Custom rendered",
+        (_, 0xa402) => "Exposure mode",
+        (_, 0xa403) => "White balance",
+        (_, 0xa405) => "Focal length (35mm)",
+        (_, 0xa406) => "Scene capture type",
+        (_, 0xa408) => "Contrast",
+        (_, 0xa409) => "Saturation",
+        (_, 0xa40a) => "Sharpness",
+        (_, 0xa40c) => "Subject distance range",
+        (_, 0xa420) => "Image unique ID",
+        (_, 0xa430) => "Owner name",
+        (_, 0xa431) => "Serial number",
+        (_, 0xa432) => "Lens info",
+        (_, 0xa433) => "Lens make",
+        (_, 0xa434) => "Lens model",
+        (_, 0xa435) => "Lens serial number",
+        _ => return None,
+    })
+}
+
+// Fujifilm maker-note tag names (community-documented, as used by exiftool).
+fn fuji_name(tag: u16) -> Option<&'static str> {
+    Some(match tag {
+        0x0000 => "Version",
+        0x0010 => "Internal serial number",
+        0x1000 => "Quality",
+        0x1001 => "Sharpness",
+        0x1002 => "White balance",
+        0x1003 => "Saturation / color",
+        0x1004 | 0x1006 => "Contrast",
+        0x1005 => "Color temperature",
+        0x100a => "White balance fine tune",
+        0x100b => "Noise reduction",
+        0x100e => "High ISO noise reduction",
+        0x100f => "Clarity",
+        0x1010 => "Flash mode",
+        0x1011 => "Flash exposure comp",
+        0x1020 => "Macro",
+        0x1021 => "Focus mode",
+        0x1022 => "AF mode",
+        0x1023 => "Focus pixel",
+        0x102b => "Priority settings",
+        0x102d => "Focus settings",
+        0x102e => "AF-C settings",
+        0x1030 => "Slow sync",
+        0x1031 => "Picture mode",
+        0x1032 => "Exposure count",
+        0x1040 => "Shadow tone",
+        0x1041 => "Highlight tone",
+        0x1044 => "Digital zoom",
+        0x1045 => "Lens modulation optimizer",
+        0x1047 => "Grain effect roughness",
+        0x1048 => "Color chrome effect",
+        0x1049 => "B&W adjustment",
+        0x104b => "B&W magenta/green",
+        0x104c => "Grain effect size",
+        0x104d => "Crop mode",
+        0x104e => "Color chrome FX blue",
+        0x1050 => "Shutter type",
+        0x1100 => "Auto bracketing",
+        0x1101 => "Sequence number",
+        0x1103 => "Drive settings",
+        0x1105 => "Drive speed",
+        0x1153 => "Panorama angle",
+        0x1154 => "Panorama direction",
+        0x1201 => "Advanced filter",
+        0x1210 => "Color mode",
+        0x1300 => "Blur warning",
+        0x1301 => "Focus warning",
+        0x1302 => "Exposure warning",
+        0x1400 => "Dynamic range",
+        0x1401 => "Film mode",
+        0x1402 => "Dynamic range setting",
+        0x1403 => "Development dynamic range",
+        0x1404 => "Min focal length",
+        0x1405 => "Max focal length",
+        0x1406 => "Max aperture at min focal",
+        0x1407 => "Max aperture at max focal",
+        0x140b => "Auto dynamic range",
+        0x1422 => "Image stabilization",
+        0x1425 => "Scene recognition",
+        0x1431 => "Rating",
+        0x1436 => "Image generation",
+        0x1438 => "Image count",
+        0x1443 => "D-range priority",
+        0x1444 => "D-range priority auto",
+        0x1445 => "D-range priority fixed",
+        0x1446 => "Flicker reduction",
+        0x1447 => "Fuji model",
+        0x1448 => "Fuji model 2",
+        0x144d => "Roll angle",
+        0x3803 => "Video recording mode",
+        0x3804 => "Peripheral lighting",
+        0x3806 => "Video compression",
+        0x3820 => "Frame rate",
+        0x3821 => "Frame width",
+        0x3822 => "Frame height",
+        0x4005 => "Face element selected",
+        0x4100 => "Faces detected",
+        0x4103 => "Face positions",
+        0x4200 => "Num face elements",
+        0x4201 => "Face element types",
+        0x4203 => "Face element positions",
+        0x4282 => "Face rec info",
+        0x8000 => "File source",
+        0x8002 => "Order number",
+        0x8003 => "Frame number",
+        0xb211 => "Parallax",
+        _ => return None,
+    })
+}
+
+impl<'a> Tiff<'a> {
+    /// All values of an entry as numbers (integers and rationals).
+    fn numbers(&self, e: Entry) -> Vec<f64> {
+        let n = (e.count as usize).min(4096);
+        let mut out = Vec::with_capacity(n.min(64));
+        for i in 0..n {
+            let v = match e.typ {
+                1 | 7 if self.ok(e.off + i, 1) => self.buf[self.base + e.off + i] as f64,
+                6 if self.ok(e.off + i, 1) => self.buf[self.base + e.off + i] as i8 as f64,
+                3 if self.ok(e.off + i * 2, 2) => self.u16(e.off + i * 2) as f64,
+                8 if self.ok(e.off + i * 2, 2) => self.u16(e.off + i * 2) as i16 as f64,
+                4 if self.ok(e.off + i * 4, 4) => self.u32(e.off + i * 4) as f64,
+                9 if self.ok(e.off + i * 4, 4) => self.u32(e.off + i * 4) as i32 as f64,
+                5 | 10 => match self.ratio(Some(e), i) {
+                    Some(r) => r,
+                    None => continue,
+                },
+                _ => break,
+            };
+            out.push(v);
+        }
+        out
+    }
+
+    /// A readable string for any entry.
+    fn display(&self, e: Entry) -> String {
+        if e.typ == 2 {
+            return self.text(Some(e)).unwrap_or_default();
+        }
+        if e.typ == 7 || e.typ == 1 {
+            if !self.ok(e.off, e.size) {
+                return String::new();
+            }
+            let bytes = &self.buf[self.base + e.off..self.base + e.off + e.size];
+            if bytes.len() <= 32 && bytes.iter().all(|&b| b == 0 || (32..127).contains(&b)) && bytes.iter().any(|&b| b != 0) {
+                return bytes.iter().take_while(|&&b| b != 0).map(|&b| b as char).collect::<String>().trim().to_string();
+            }
+            if bytes.len() > 16 {
+                return format!("({} bytes)", bytes.len());
+            }
+        }
+        let nums = self.numbers(e);
+        let fmt = |v: f64| {
+            if (v - v.round()).abs() < 1e-9 {
+                format!("{}", v.round() as i64)
+            } else {
+                format!("{:.4}", v).trim_end_matches('0').trim_end_matches('.').to_string()
+            }
+        };
+        if e.typ == 5 && nums.len() == 1 {
+            // show short exposure-like rationals as fractions too
+            if let Some(r) = self.ratio(Some(e), 0) {
+                if r > 0.0 && r < 1.0 {
+                    return format!("{} (1/{})", fmt(r), (1.0 / r).round());
+                }
+            }
+        }
+        let shown: Vec<String> = nums.iter().take(24).map(|&v| fmt(v)).collect();
+        if nums.len() > 24 {
+            format!("{} … ({} values)", shown.join(" "), nums.len())
+        } else {
+            shown.join(" ")
+        }
+    }
+}
+
+fn dump_ifd(t: &Tiff, entries: &[Entry], group: &str, names: &dyn Fn(u16) -> Option<&'static str>, skip: &[u16]) -> Vec<Value> {
+    entries
+        .iter()
+        .filter(|e| !skip.contains(&e.tag))
+        .map(|e| {
+            let name = names(e.tag).map(String::from).unwrap_or_else(|| format!("Tag 0x{:04x}", e.tag));
+            serde_json::json!({ "group": group, "tag": format!("0x{:04x}", e.tag), "name": name, "value": t.display(*e) })
+        })
+        .collect()
+}
+
+use serde_json::Value;
+
+/// Every tag the camera wrote (IFD0, Exif, GPS, Fujifilm maker note), plus
+/// the spatial ones as numbers for drawing: the focus point and detected
+/// faces, in full-image pixels (before orientation is applied).
+pub fn all_metadata(path: &Path) -> Value {
+    let mut tags: Vec<Value> = Vec::new();
+    let mut out = serde_json::json!({ "tags": [], "focus": null, "faces": [], "width": null, "height": null, "orientation": 1 });
+    let Ok(mut f) = File::open(path) else { return out };
+    let mut buf = Vec::new();
+    if (&mut f).take(256 * 1024).read_to_end(&mut buf).is_err() || buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
+        return out;
+    }
+    let mut p = 2;
+    let mut base = None;
+    while p + 4 <= buf.len() && buf[p] == 0xff {
+        let marker = buf[p + 1];
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let len = u16::from_be_bytes([buf[p + 2], buf[p + 3]]) as usize;
+        if marker == 0xe1 && p + 10 <= buf.len() && &buf[p + 4..p + 10] == b"Exif\0\0" {
+            base = Some(p + 10);
+            buf.truncate((p + 2 + len).min(buf.len()));
+            break;
+        }
+        p += 2 + len;
+    }
+    let Some(base) = base else { return out };
+    let Some(t) = tiff_at(&buf, base) else { return out };
+    let ifd0 = t.ifd(t.u32(4) as usize);
+    let exif_names = |tag| exif_name("EXIF", tag);
+    tags.extend(dump_ifd(&t, &ifd0, "Image", &exif_names, &[0x8769, 0x8825, 0xc4a5]));
+    out["orientation"] = t.num(Tiff::find(&ifd0, 0x0112)).unwrap_or(1).into();
+    if let Some(ptr) = t.num(Tiff::find(&ifd0, 0x8825)) {
+        let gps = t.ifd(ptr as usize);
+        let gps_names = |tag| exif_name("GPS", tag);
+        tags.extend(dump_ifd(&t, &gps, "GPS", &gps_names, &[]));
+    }
+    if let Some(ptr) = t.num(Tiff::find(&ifd0, 0x8769)) {
+        let exif = t.ifd(ptr as usize);
+        tags.extend(dump_ifd(&t, &exif, "Exif", &exif_names, &[0x927c, 0xa005]));
+        out["width"] = t.num(Tiff::find(&exif, 0xa002)).into();
+        out["height"] = t.num(Tiff::find(&exif, 0xa003)).into();
+        if let Some(mn) = Tiff::find(&exif, 0x927c) {
+            let start = base + mn.off;
+            if t.ok(mn.off, 12) && &buf[start..start + 8] == b"FUJIFILM" {
+                let m = Tiff { buf: &buf, base: start, little: true };
+                let ifd = m.ifd(m.u32(8) as usize);
+                tags.extend(dump_ifd(&m, &ifd, "Fujifilm", &fuji_name, &[]));
+                if let Some(e) = Tiff::find(&ifd, 0x1023) {
+                    let v = m.numbers(e);
+                    if v.len() >= 2 && (v[0] > 0.0 || v[1] > 0.0) {
+                        out["focus"] = serde_json::json!([v[0], v[1]]);
+                    }
+                }
+                if let Some(e) = Tiff::find(&ifd, 0x4103) {
+                    let v = m.numbers(e);
+                    out["faces"] = v.chunks_exact(4).map(|c| serde_json::json!([c[0], c[1], c[2], c[3]])).collect::<Vec<_>>().into();
+                }
+                if let Some(r) = m.num(Tiff::find(&ifd, 0x1431)) {
+                    out["rating"] = r.into();
+                }
+            }
+        }
+    }
+    out["tags"] = tags.into();
+    out
 }

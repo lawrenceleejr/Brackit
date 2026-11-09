@@ -33,6 +33,7 @@ pub struct Photo {
     /// The set's RAW file (.RAF), if the camera wrote one.
     pub raw: Option<PathBuf>,
     pub raw_size: u64,
+    pub cam_rating: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -57,6 +58,7 @@ pub struct PublicPhoto<'a> {
     has_thumb: bool,
     raw_name: Option<String>,
     raw_size: Option<u64>,
+    cam_rating: Option<u32>,
 }
 
 impl Photo {
@@ -81,6 +83,7 @@ impl Photo {
             has_thumb: self.thumb.is_some(),
             raw_name: self.raw.as_ref().and_then(|r| r.file_name()).map(|n| n.to_string_lossy().to_string()),
             raw_size: self.raw.as_ref().map(|_| self.raw_size),
+            cam_rating: self.cam_rating,
         }
     }
 }
@@ -420,6 +423,7 @@ fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
         video,
         raw: None,
         raw_size: 0,
+        cam_rating: meta.rating,
         name,
     })
 }

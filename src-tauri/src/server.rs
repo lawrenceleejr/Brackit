@@ -34,11 +34,17 @@ struct State {
     last_root: Option<String>,
     /// "name:size" of every card file ever exported (for "since last import")
     imported: Vec<String>,
+    /// Library view: 0–5 stars and flags, keyed like picks (name:size:time)
+    ratings: serde_json::Map<String, Value>,
+    flagged: Vec<String>,
 }
 
 pub struct App {
     lib: RwLock<Library>,
+    /// the export folder, browsed in the Library view
+    out: RwLock<Library>,
     progress: Progress,
+    out_progress: Progress,
     state: Mutex<State>,
     deleter: Deleter,
     pub shell: &'static str,
@@ -66,11 +72,22 @@ fn now_ms() -> u64 {
 }
 
 impl App {
+    /// `?src=out` addresses the export-folder library; anything else the card.
+    fn lib_for(&self, params: &HashMap<String, String>) -> &RwLock<Library> {
+        if params.get("src").map(String::as_str) == Some("out") {
+            &self.out
+        } else {
+            &self.lib
+        }
+    }
+
     pub fn new(shell: &'static str) -> Arc<App> {
         let state = fs::read(state_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         Arc::new(App {
             lib: RwLock::new(Library::default()),
+            out: RwLock::new(Library::default()),
             progress: Progress::default(),
+            out_progress: Progress::default(),
             state: Mutex::new(state),
             deleter: Deleter::default(),
             shell,
@@ -249,9 +266,17 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
     let put = method == Method::Put;
 
     if get {
+        if let Some(id) = path.strip_prefix("/api/meta/") {
+            // every tag + focus point / faces, for the metadata list and annotations
+            let file = app.lib_for(params).read().unwrap().photos.get(id).filter(|p| !p.video).map(|p| p.file.clone());
+            return match file {
+                Some(f) => send_json(req, 200, crate::jpeg::all_metadata(&f)),
+                None => err(req, 404, "not found"),
+            };
+        }
         if let Some(id) = path.strip_prefix("/api/info/") {
             // camera settings + film recipe, read on demand (not at scan time)
-            let file = app.lib.read().unwrap().photos.get(id).filter(|p| !p.video).map(|p| p.file.clone());
+            let file = app.lib_for(params).read().unwrap().photos.get(id).filter(|p| !p.video).map(|p| p.file.clone());
             return match file {
                 Some(f) => {
                     let rows: Vec<Value> = crate::jpeg::shot_info(&f).into_iter().map(|(k, v)| json!([k, v])).collect();
@@ -262,7 +287,7 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
         }
         if path == "/api/thumbs" {
             let photos: Vec<Photo> = {
-                let lib = app.lib.read().unwrap();
+                let lib = app.lib_for(params).read().unwrap();
                 params
                     .get("ids")
                     .map(|ids| ids.split(',').filter_map(|id| lib.photos.get(id)).filter(|p| !p.video).take(200).cloned().collect())
@@ -271,7 +296,7 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             return serve_thumbs(req, photos);
         }
         if let Some(id) = path.strip_prefix("/api/img/") {
-            let photo = app.lib.read().unwrap().photos.get(id).cloned();
+            let photo = app.lib_for(params).read().unwrap().photos.get(id).cloned();
             return match photo {
                 Some(p) if p.video => serve_video(req, &p),
                 Some(p) => {
@@ -295,6 +320,7 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
                     "root": lib.root.as_ref().map(|r| r.to_string_lossy()),
                     "lastRoot": s.last_root, "lastDest": s.last_dest,
                     "flags": s.flags, "edits": s.edits, "exported": s.exported,
+                    "ratings": s.ratings, "flagged": s.flagged,
                     "canPick": app.picker.get().is_some() || cfg!(target_os = "macos"),
                     "shell": app.shell,
                     "home": h.to_string_lossy(),
@@ -387,6 +413,74 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
                 Err(e) => err(req, 409, &e),
             }
         }
+        ("/api/out/open", _, true, _) => {
+            // scan the export folder (recursively) for the Library view
+            let body = read_json(&mut req);
+            let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "Folder not found") };
+            let p = fs::canonicalize(&p).unwrap_or(p);
+            if !p.is_dir() {
+                return err(req, 404, "The export folder doesn't exist yet — export something first");
+            }
+            let Some(lib) = library::scan(&p, &library::Scope::default(), &app.out_progress) else {
+                return err(req, 409, "superseded by a newer scan");
+            };
+            let body = summary(&lib);
+            *app.out.write().unwrap() = lib;
+            send_json(req, 200, body)
+        }
+        ("/api/rate", _, true, _) => {
+            // {key, stars?: 0-5, flag?: bool}
+            let body = read_json(&mut req);
+            let Some(key) = body.get("key").and_then(Value::as_str).map(String::from) else { return err(req, 400, "no key") };
+            {
+                let mut s = app.state.lock().unwrap();
+                if let Some(st) = body.get("stars").and_then(Value::as_u64) {
+                    if st == 0 {
+                        s.ratings.remove(&key);
+                    } else {
+                        s.ratings.insert(key.clone(), st.min(5).into());
+                    }
+                }
+                if let Some(f) = body.get("flag").and_then(Value::as_bool) {
+                    s.flagged.retain(|k| k != &key);
+                    if f {
+                        s.flagged.push(key.clone());
+                    }
+                }
+            }
+            app.save_state();
+            send_json(req, 200, json!({ "ok": true }))
+        }
+        ("/api/out/trash", _, true, _) => {
+            // move files from the export folder to the system Trash / Recycle Bin
+            let body = read_json(&mut req);
+            let photos: Vec<Photo> = {
+                let lib = app.out.read().unwrap();
+                body.get("ids")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|id| lib.photos.get(id).cloned()).collect())
+                    .unwrap_or_default()
+            };
+            let mut moved = Vec::new();
+            let mut failed = Vec::new();
+            for p in &photos {
+                match trash::delete(&p.file) {
+                    Ok(()) => moved.push(p.id.clone()),
+                    Err(e) => failed.push(json!({ "name": p.name, "error": e.to_string() })),
+                }
+            }
+            {
+                let mut lib = app.out.write().unwrap();
+                for id in &moved {
+                    lib.photos.remove(id);
+                }
+                for set in lib.sets.iter_mut() {
+                    set.photos.retain(|id| !moved.contains(id));
+                }
+                lib.sets.retain(|s| !s.photos.is_empty());
+            }
+            send_json(req, 200, json!({ "moved": moved, "failed": failed }))
+        }
         ("/api/survey", _, true, _) => {
             let body = read_json(&mut req);
             let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "Folder not found") };
@@ -448,7 +542,12 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
         ("/api/reveal", _, true, _) => {
             let body = read_json(&mut req);
             if let Some(p) = body.get("path").and_then(Value::as_str) {
-                open_path(&expand(p).to_string_lossy());
+                let p = expand(p);
+                if body.get("select").and_then(Value::as_bool).unwrap_or(false) {
+                    reveal_file(&p);
+                } else {
+                    open_path(&p.to_string_lossy());
+                }
             }
             send_json(req, 200, json!({ "ok": true }))
         }
@@ -1003,6 +1102,18 @@ fn mac_choose_folder(prompt: &str) -> Option<String> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches('/').to_string();
     if s.is_empty() { None } else { Some(s) }
+}
+
+/// Show a file selected in Finder / Explorer / the file manager.
+fn reveal_file(p: &Path) {
+    let r = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg("-R").arg(p).spawn()
+    } else if cfg!(windows) {
+        std::process::Command::new("explorer").arg(format!("/select,{}", p.to_string_lossy())).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(p.parent().unwrap_or(p)).spawn()
+    };
+    let _ = r;
 }
 
 pub fn open_path(p: &str) {
