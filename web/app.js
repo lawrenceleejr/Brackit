@@ -1605,6 +1605,15 @@ async function renderStaged() {
   }
 }
 
+// E: export everything staged, showing the staged view so progress is visible
+function exportAll() {
+  if (!S.lib) return;
+  if (!stagedPhotos().length) return toast('Nothing staged yet — press 1, 2 or 3 to pick');
+  if (S.solo) closeSolo();
+  openStaged();
+  doExport();
+}
+
 let exporting = false;
 async function doExport() {
   if (exporting) return;
@@ -2075,7 +2084,7 @@ function onKey(e) {
 
   if (!$('#staged').hidden) {
     if (k === 'Escape' || k === 's' || k === 'S') closeStaged();
-    else if (k === 'Enter') doExport();
+    else if (k === 'Enter' || k === 'e' || k === 'E') doExport();
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -2183,9 +2192,11 @@ function onKey(e) {
       break;
     case 's':
     case 'S':
+      openStaged();
+      break;
     case 'e':
     case 'E':
-      openStaged();
+      exportAll();
       break;
     case 'b':
     case 'B':

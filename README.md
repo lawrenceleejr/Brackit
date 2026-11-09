@@ -43,10 +43,11 @@ The download is under 2 MB.
 5. **Look closer with space.** It shows your pick full screen, at full
    resolution. Press `1` `2` `3` there to compare looks, `Z` to see actual
    pixels, and space again to go back.
-6. **Export with S.** You'll see everything you picked. Ones that will be
+6. **Export.** Press `S` to see everything you picked. Ones that will be
    copied have an orange outline. Below is what's already in your export
    folder. Choose the folder, tick **Include RAW** if you want the `.RAF`
-   files too, and press **Export**.
+   files too, and press **Export**. Next time, just press `E` from anywhere
+   to export straight away.
 
 Your picks are remembered, so you can eject the card and carry on later.
 
@@ -78,7 +79,8 @@ Your picks are remembered, so you can eject the card and carry on later.
 | `Z` | actual pixels while inspecting |
 | `C` | straighten & crop |
 | `G` | overview of all shots |
-| `S` | your picks & export |
+| `S` | see your picks |
+| `E` | export everything you've picked |
 | `⌘⌫` / `⌘Z` | delete from card / undo |
 | `B` | only show brackets |
 | `U` | jump to the next shot you haven't picked from |
