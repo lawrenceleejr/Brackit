@@ -1,0 +1,41 @@
+{{ define "main" }}
+<header class="hero">
+  <p class="mark">Brackit</p>
+  <h1>Three film simulations of the same shot, side by side. Press 1, 2 or 3.</h1>
+  <p class="get"><a href="#download">Download</a> for macOS, Windows and Linux · <a href="{{ site.Params.repo }}">Source</a></p>
+</header>
+
+<figure class="shot">
+  <img src="{{ "img/brackets.jpg" | relURL }}" width="1440" height="900"
+       alt="Brackit showing one shot in Classic Chrome, Classic Neg. and Acros, with Classic Neg. picked">
+  <figcaption>One press of the shutter, three looks. The orange outline is the pick.</figcaption>
+</figure>
+
+<main class="text">
+  {{ .Content }}
+
+  <section id="download" class="download">
+    <h2>Download</h2>
+    <ul class="dl">
+      {{ range site.Data.downloads.item }}
+      <li data-os="{{ .os }}">
+        <a class="dl-link" href="{{ site.Params.repo }}/releases/latest/download/{{ .file }}">{{ .label }}</a>
+        <span class="dl-note">{{ .note }}</span>
+      </li>
+      {{ end }}
+    </ul>
+    <p class="small">A few megabytes. Older versions, release notes and command-line builds are on the
+      <a href="{{ site.Params.latest }}">releases page</a>. The apps aren't signed by Apple or Microsoft yet,
+      which is why the first launch needs the extra step.</p>
+  </section>
+</main>
+
+<script>
+  // point at the download that matches this computer
+  (function () {
+    var ua = navigator.userAgent, os = /Windows/.test(ua) ? 'windows' : /Mac/.test(ua) ? 'mac' : /Linux|X11/.test(ua) ? 'linux' : '';
+    var li = os && document.querySelector('.dl li[data-os="' + os + '"]');
+    if (li) li.classList.add('here');
+  })();
+</script>
+{{ end }}

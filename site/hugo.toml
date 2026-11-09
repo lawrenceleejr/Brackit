@@ -1,0 +1,12 @@
+baseURL = "https://lawrenceleejr.github.io/Brackit/"
+languageCode = "en"
+title = "Brackit"
+disableKinds = ["taxonomy", "term", "RSS", "section"]
+
+[params]
+  description = "Review Fujifilm film simulation brackets side by side, pick one, copy it off the card."
+  repo = "https://github.com/lawrenceleejr/Brackit"
+  latest = "https://github.com/lawrenceleejr/Brackit/releases/latest"
+
+[markup.goldmark.renderer]
+  unsafe = true
