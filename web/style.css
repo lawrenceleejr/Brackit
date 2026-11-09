@@ -248,3 +248,11 @@ body.fs .look .caption { opacity: .75; }
 .aspects button { color: var(--muted); }
 .aspects button.on { color: var(--ink); border-bottom: 1px solid var(--ink); }
 .editor-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* inspect view: 1 2 3 strip — outlined = on screen, filled = picked */
+#solo-caption .keys { display: flex; gap: 4px; align-self: center; }
+#solo-caption .keys .key { background: none; border-color: var(--faint); color: var(--muted); }
+#solo-caption .keys .key.here { border-color: var(--ink); color: var(--ink); }
+#solo-caption .keys .key.on { background: var(--accent); border-color: var(--accent); color: #111; }
+#solo-caption .keys .key.on.here { box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px var(--ink); }
+#solo-caption.flagged .sim { color: var(--accent); }

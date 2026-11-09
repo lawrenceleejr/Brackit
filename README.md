@@ -6,7 +6,7 @@ want, and copy just those off the SD card.
 Shoot in film-simulation bracketing mode on an X100VI (or any recent X-series
 body) and every press of the shutter writes three JPEGs, one per simulation.
 Brackit finds those triples, shows them as a 3-up with the simulation name
-under each, and lets you flag the keepers with `1` `2` `3`.
+under each, and lets you pick the keeper with `1` `2` `3`.
 
 - Fast: reads only the JPEG headers to group and label shots, and displays the
   ~1920 px preview Fuji already embeds in every file (no decoding of 40 MP
@@ -53,8 +53,11 @@ your PATH.)
 | key | |
 |---|---|
 | `←` `→` | previous / next set (`⇧` jumps ten) |
-| `1` `2` `3` | flag a look for export (toggle) |
-| click, `space` | view one look large (full resolution) |
+| `1` `2` `3` | pick that look for export (replaces the set's pick) |
+| `⌘` + `1` `2` `3` | add / remove a look, to export several from one set (`⇧` also works in the browser, where ⌘-digits switch tabs) |
+| `0` | unstage the whole set |
+| `space` | inspect the pick full screen at full resolution; there `1` `2` `3` switch (and pick) looks, `space`/`Esc` returns |
+| click | view one look large |
 | `↑` `↓` | cycle looks in the large view |
 | `Z`, click | actual pixels in the large view |
 | `C` | straighten & crop (`[` `]` rotate 0.1°, `⇧` for 1°) |

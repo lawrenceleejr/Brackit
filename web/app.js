@@ -233,14 +233,46 @@ function saveFlags() {
   flagTimer = setTimeout(() => api('PUT', '/api/flags', { flags: [...S.flags] }).catch(() => toast('Could not save flags')), 150);
 }
 
+/* Selection model: 1/2/3 picks one version of the set (replacing any other
+   pick), ⌘+number adds/removes a version to pick several, 0 unstages the set. */
+function selectOnly(pos) {
+  const set = S.view[S.idx];
+  if (!set || pos >= set.photos.length) return false;
+  set.photos.forEach((id, i) => {
+    const key = photo(id).key;
+    if (i === pos) S.flags.add(key);
+    else S.flags.delete(key);
+  });
+  saveFlags();
+  updateFlagsUi();
+  return true;
+}
+
 function toggleFlag(pos) {
   const set = S.view[S.idx];
-  if (!set || pos >= set.photos.length) return;
+  if (!set || pos >= set.photos.length) return false;
   const p = photo(set.photos[pos]);
   if (S.flags.has(p.key)) S.flags.delete(p.key);
   else S.flags.add(p.key);
   saveFlags();
   updateFlagsUi();
+  return true;
+}
+
+function clearSet() {
+  const set = S.view[S.idx];
+  if (!set) return;
+  const had = set.photos.some((id) => S.flags.delete(photo(id).key));
+  if (had) {
+    saveFlags();
+    updateFlagsUi();
+    toast('Unstaged');
+  }
+}
+
+function selectedPos(set) {
+  const i = set ? set.photos.findIndex((id) => S.flags.has(photo(id).key)) : -1;
+  return i < 0 ? null : i;
 }
 
 function stagedPhotos() {
@@ -256,7 +288,7 @@ function updateFlagsUi() {
     document.querySelectorAll('#stage .look').forEach((look, i) => {
       look.classList.toggle('flagged', S.flags.has(photo(set.photos[i]).key));
     });
-    if (S.solo) $('#solo-caption').classList.toggle('flagged', S.flags.has(photo(set.photos[S.solo.pos]).key));
+    if (S.solo) renderSoloCaption();
   }
   const n = stagedPhotos().length;
   $('#staged-count').textContent = n;
@@ -369,7 +401,9 @@ function go(delta) {
   S.idx = next;
   if (S.solo) {
     S.solo.zoom = false;
-    S.solo.pos = Math.min(S.solo.pos, S.view[S.idx].photos.length - 1);
+    const set = S.view[S.idx];
+    // follow the pick in the new set, otherwise keep looking at the same slot
+    S.solo.pos = selectedPos(set) ?? Math.min(S.solo.pos, set.photos.length - 1);
   }
   render();
 }
@@ -418,16 +452,23 @@ function drawTicks() {
 
 /* ------------------------------------------------------------ solo (one look, large) */
 
-function openSolo(pos) {
+// opts.fullscreen: also take the whole screen; leaving the view restores it.
+function openSolo(pos, opts = {}) {
   const set = S.view[S.idx];
   if (!set || set.kind === 'video') return;
-  S.solo = { pos, zoom: false };
+  S.solo = { pos, zoom: false, ownsFs: false };
   $('#solo').hidden = false;
   renderSolo();
+  if (opts.fullscreen && !document.fullscreenElement) {
+    S.solo.ownsFs = true;
+    document.documentElement.requestFullscreen().catch(() => S.solo && (S.solo.ownsFs = false));
+  }
 }
 
 function closeSolo() {
+  const ownsFs = S.solo && S.solo.ownsFs;
   S.solo = null;
+  if (ownsFs && document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $('#solo').hidden = true;
   $('#solo').classList.remove('zoom');
   $('#solo-frame').innerHTML = '';
@@ -443,14 +484,7 @@ function renderSolo() {
   const frame = $('#solo-frame');
   const solo = $('#solo');
   solo.classList.toggle('zoom', !!S.solo.zoom);
-  const cap = $('#solo-caption');
-  cap.replaceWith((() => {
-    const c = caption(p, S.solo.pos, set.photos.length);
-    c.id = 'solo-caption';
-    c.classList.toggle('flagged', S.flags.has(p.key));
-    if (set.photos.length > 1) c.append(el('span', 'file', `${S.solo.pos + 1} of ${set.photos.length}  ↑↓`));
-    return c;
-  })());
+  renderSoloCaption();
   const show = (node) => {
     if (token !== soloToken) return;
     node.style.width = '';
@@ -477,6 +511,37 @@ function renderSolo() {
     frame.dataset.id = id;
     show(edit ? renderEdited(full, edit) : full);
   }, () => {});
+}
+
+// Caption for the inspect view: a key per look — the one on screen is
+// outlined, picked ones are filled — then the name of the look on screen.
+function renderSoloCaption() {
+  const set = S.view[S.idx];
+  if (!S.solo || !set) return;
+  const p = photo(set.photos[S.solo.pos]);
+  const c = el('div', 'caption');
+  c.id = 'solo-caption';
+  if (set.photos.length > 1) {
+    const keys = el('span', 'keys');
+    set.photos.forEach((id, i) => {
+      const k = el('span', 'key', String(i + 1));
+      if (S.flags.has(photo(id).key)) k.classList.add('on');
+      if (i === S.solo.pos) k.classList.add('here');
+      k.title = photo(id).filmSim || '';
+      k.onclick = (e) => {
+        e.stopPropagation();
+        selectOnly(i);
+        S.solo.pos = i;
+        renderSolo();
+      };
+      keys.append(k);
+    });
+    c.append(keys);
+  }
+  c.classList.toggle('flagged', S.flags.has(p.key));
+  c.append(el('span', 'sim', p.filmSim || 'Photo'), el('span', 'file', p.name));
+  if (editOf(p)) c.append(el('span', 'edited', 'cropped'));
+  $('#solo-caption').replaceWith(c);
 }
 
 function soloNode() {
@@ -988,6 +1053,8 @@ function bindUi() {
 
   document.addEventListener('fullscreenchange', () => {
     document.body.classList.toggle('fs', !!document.fullscreenElement);
+    // Esc in full screen is swallowed by the browser; treat it as "back"
+    if (!document.fullscreenElement && S.solo && S.solo.ownsFs) closeSolo();
     setTimeout(onResize, 50);
   });
   let chromeTimer = null;
@@ -1014,8 +1081,12 @@ function bindUi() {
 
 function onKey(e) {
   if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-  const k = e.key;
+  // ⌘/Ctrl/Shift + digit = add to a multi-pick (browsers reserve ⌘1-9 for
+  // tabs, so Shift works there too). Other modified keys belong to the system.
+  const digit = /^Digit([0-9])$/.exec(e.code);
+  const addMod = e.metaKey || e.ctrlKey || e.shiftKey;
+  if ((e.metaKey || e.ctrlKey || e.altKey) && !digit) return;
+  const k = digit ? digit[1] : e.key;
 
   if (!$('#help').hidden) {
     $('#help').hidden = true;
@@ -1070,7 +1141,25 @@ function onKey(e) {
     case '1':
     case '2':
     case '3':
-      toggleFlag(Number(k) - 1);
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9': {
+      if (!set) break;
+      const pos = Number(k) - 1;
+      if (pos >= set.photos.length) break;
+      if (digit && addMod) toggleFlag(pos);
+      else selectOnly(pos);
+      if (S.solo && S.solo.pos !== pos) {
+        S.solo.pos = pos;
+        renderSolo();
+      }
+      break;
+    }
+    case '0':
+      clearSet();
       break;
     case 'ArrowUp':
     case 'ArrowDown':
@@ -1085,7 +1174,7 @@ function onKey(e) {
       const v = videoEl();
       if (v) v.paused ? v.play() : v.pause();
       else if (S.solo) closeSolo();
-      else if (set) openSolo(S.hoverPos ?? 0);
+      else if (set) openSolo(selectedPos(set) ?? S.hoverPos ?? 0, { fullscreen: true });
       break;
     }
     case 'Enter':
