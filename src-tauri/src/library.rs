@@ -30,6 +30,9 @@ pub struct Photo {
     pub preview: Option<(u64, u64)>,
     pub thumb: Option<(u64, u64)>,
     pub video: bool,
+    /// The set's RAW file (.RAF), if the camera wrote one.
+    pub raw: Option<PathBuf>,
+    pub raw_size: u64,
 }
 
 #[derive(Serialize)]
@@ -52,6 +55,8 @@ pub struct PublicPhoto<'a> {
     kind: &'static str,
     has_preview: bool,
     has_thumb: bool,
+    raw_name: Option<String>,
+    raw_size: Option<u64>,
 }
 
 impl Photo {
@@ -74,6 +79,8 @@ impl Photo {
             kind: if self.video { "video" } else { "photo" },
             has_preview: self.preview.is_some(),
             has_thumb: self.thumb.is_some(),
+            raw_name: self.raw.as_ref().and_then(|r| r.file_name()).map(|n| n.to_string_lossy().to_string()),
+            raw_size: self.raw.as_ref().map(|_| self.raw_size),
         }
     }
 }
@@ -141,6 +148,7 @@ fn local_day(ms: f64) -> String {
 pub fn survey(root: &Path) -> serde_json::Value {
     let mut files = Vec::new();
     walk(root, 0, &mut files);
+    files.retain(|f| !f.file_name().map_or(false, |n| is_raw(&n.to_string_lossy())));
     let mut groups: std::collections::BTreeMap<(String, String), (u64, u64)> = Default::default();
     for f in &files {
         let Ok(md) = std::fs::metadata(f) else { continue };
@@ -168,6 +176,9 @@ pub fn is_jpeg(name: &str) -> bool {
 pub fn is_video(name: &str) -> bool {
     matches!(ext_lower(name).as_str(), "mov" | "mp4" | "m4v")
 }
+pub fn is_raw(name: &str) -> bool {
+    ext_lower(name) == "raf"
+}
 
 fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth > 6 {
@@ -184,7 +195,7 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && !SKIP.contains(&name.as_str()) {
                 walk(&e.path(), depth + 1, out);
             }
-        } else if ft.is_file() && (is_jpeg(&name) || is_video(&name)) {
+        } else if ft.is_file() && (is_jpeg(&name) || is_video(&name) || is_raw(&name)) {
             out.push(e.path());
         }
     }
@@ -265,6 +276,9 @@ pub fn scan(root: &Path, scope: &Scope, progress: &Progress) -> Option<Library> 
     };
     let mut files = Vec::new();
     walk(&start, 0, &mut files);
+    // RAWs aren't shown; they're attached to their set for export/delete
+    let (raws, mut files): (Vec<PathBuf>, Vec<PathBuf>) =
+        files.into_iter().partition(|f| f.file_name().map_or(false, |n| is_raw(&n.to_string_lossy())));
     if scope.from.is_some() || scope.to.is_some() {
         files.retain(|f| std::fs::metadata(f).map(|md| scope.day_ok(&local_day(mtime_ms(&md)))).unwrap_or(false));
     }
@@ -297,12 +311,42 @@ pub fn scan(root: &Path, scope: &Scope, progress: &Progress) -> Option<Library> 
     }
     let mut photos: Vec<Photo> = results.into_inner().unwrap().into_iter().flatten().collect();
     let sets = group(&mut photos);
+    attach_raws(&mut photos, &sets, &raws);
     Some(Library {
         root: Some(root.to_path_buf()),
         scope: scope.clone(),
         photos: photos.into_iter().map(|p| (p.id.clone(), p)).collect(),
         sets,
     })
+}
+
+/// A set's RAW is a .RAF in the same folder whose name matches any of the
+/// set's JPEGs (RAW+JPEG writes DSCF0001.RAF beside DSCF0001.JPG; a film
+/// simulation bracket writes one RAF for the three JPEGs).
+fn attach_raws(photos: &mut [Photo], sets: &[Set], raws: &[PathBuf]) {
+    if raws.is_empty() {
+        return;
+    }
+    let key = |p: &Path| {
+        (
+            p.parent().map(Path::to_path_buf).unwrap_or_default(),
+            p.file_stem().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default(),
+        )
+    };
+    let by_stem: HashMap<(PathBuf, String), &PathBuf> = raws.iter().map(|r| (key(r), r)).collect();
+    let index: HashMap<String, usize> = photos.iter().enumerate().map(|(i, p)| (p.id.clone(), i)).collect();
+    for set in sets {
+        let raw = set.photos.iter().filter_map(|id| index.get(id)).find_map(|&i| by_stem.get(&key(&photos[i].file)).copied());
+        if let Some(raw) = raw {
+            let size = std::fs::metadata(raw).map(|m| m.len()).unwrap_or(0);
+            for id in &set.photos {
+                if let Some(&i) = index.get(id) {
+                    photos[i].raw = Some(raw.clone());
+                    photos[i].raw_size = size;
+                }
+            }
+        }
+    }
 }
 
 fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
@@ -346,6 +390,8 @@ fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
         preview: meta.preview,
         thumb: meta.thumb,
         video,
+        raw: None,
+        raw_size: 0,
         name,
     })
 }

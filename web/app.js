@@ -923,16 +923,28 @@ function openOverview() {
   const grid = $('#ov-grid');
   grid.innerHTML = '';
   if (OV.io) OV.io.disconnect();
+  // Background preview prefetch would compete with the tiles: pause it.
+  for (const [url, e] of [...imageCache]) {
+    if (!e.done && e.kind === 'preview') {
+      drop(e);
+      imageCache.delete(url);
+    }
+  }
+  // Tiles show each file's embedded header thumbnail (~10 KB, a partial
+  // read), through the same queue at on-screen priority, reusing any the
+  // viewer already prefetched.
   OV.io = new IntersectionObserver(
     (entries) => {
       for (const en of entries) {
         if (!en.isIntersecting) continue;
         OV.io.unobserve(en.target);
-        const img = new Image();
-        img.decoding = 'async';
-        img.src = en.target.dataset.src;
-        img.alt = '';
-        en.target.append(img);
+        const tile = en.target;
+        getImage(tile.dataset.src, 0.5).promise.then((img) => {
+          if (!img.naturalWidth || !tile.isConnected) return;
+          const c = img.cloneNode();
+          c.alt = '';
+          tile.prepend(c);
+        });
       }
     },
     { root: $('#overview'), rootMargin: '600px 0px' }
@@ -965,7 +977,7 @@ function openOverview() {
     tile.title = `${set.photos.map((id) => photo(id).name).join(', ')}${shown.filmSim ? ' · ' + shown.filmSim : ''}`;
     if (set.kind === 'video') tile.append(el('span', 'ov-video', '▶'));
     else {
-      tile.dataset.src = shown.hasThumb ? thumbUrl(shown.id) : previewUrl(shown.id);
+      tile.dataset.src = thumbUrl(shown.id); // the server falls back to the preview if a file has none
       OV.io.observe(tile);
     }
     if (set.photos.length > 1) tile.append(el('span', 'ov-n', String(set.photos.length)));
@@ -986,7 +998,7 @@ function closeOverview(jumpTo) {
   if (jumpTo != null && jumpTo !== S.idx) {
     S.idx = jumpTo;
     render();
-  }
+  } else preloadAround(); // resume prefetching where we were
 }
 
 function moveOverviewCursor(i, block = 'nearest') {
@@ -1353,6 +1365,14 @@ function closeStaged() {
   $('#staged-grid').innerHTML = '';
 }
 
+// "Include RAW" is a per-viewer preference
+const withRaw = () => $('#with-raw').checked;
+function rawsOf(items) {
+  const m = new Map(); // one RAW per set, even if several looks are picked
+  for (const p of items) if (p.rawName) m.set(`${p.rawName}:${p.rawSize}`, p);
+  return m;
+}
+
 let destToken = 0;
 async function renderStaged() {
   const token = ++destToken;
@@ -1363,7 +1383,9 @@ async function renderStaged() {
   const names = new Set(dest.files.map((f) => f.name));
   // already written: an identical file is in the folder (cropped exports
   // differ in size, so for those: exported before and the name is there)
-  const written = (p) => (editOf(p) ? S.exported.has(p.key) && names.has(p.name) : there.has(`${p.name}:${p.size}`));
+  const jpegWritten = (p) => (editOf(p) ? S.exported.has(p.key) && names.has(p.name) : there.has(`${p.name}:${p.size}`));
+  const rawWritten = (p) => !withRaw() || !p.rawName || there.has(`${p.rawName}:${p.rawSize}`);
+  const written = (p) => jpegWritten(p) && rawWritten(p);
   const items = stagedPhotos();
   const grid = $('#staged-grid');
   grid.innerHTML = '';
@@ -1375,7 +1397,13 @@ async function renderStaged() {
   if (vids) parts.push(`${vids} video${vids === 1 ? '' : 's'}`);
   const edited = items.filter((p) => editOf(p)).length;
   if (edited) parts.push(`${edited} cropped`);
-  $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(bytes)}` : 'Nothing staged yet';
+  const raws = rawsOf(items);
+  const rawBytes = [...raws.values()].reduce((a, p) => a + p.rawSize, 0);
+  $('#raw-opt').hidden = !raws.size;
+  $('#raw-count').textContent = raws.size ? `(${fmtN(raws.size)})` : '';
+  if (raws.size && withRaw()) parts.push(`${fmtN(raws.size)} RAW`);
+  const total = bytes + (withRaw() ? rawBytes : 0);
+  $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(total)}` : 'Nothing staged yet';
   $('#dest').textContent = S.dest.replace(S.server.home, '~');
   $('#dest').title = S.dest;
   const pending = items.filter((p) => !written(p)).length;
@@ -1395,6 +1423,7 @@ async function renderStaged() {
     const meta = el('div', 'meta');
     meta.append(el('span', 'sim', p.kind === 'video' ? 'Video' : p.filmSim || 'Photo'), el('span', 'muted', p.name));
     tile.append(meta);
+    if (withRaw() && p.rawName) meta.append(el('span', 'rawtag', '+RAW'));
     if (written(p)) meta.append(el('span', 'there', 'in folder'));
     else tile.classList.add('pending'); // will be written on export: outlined
     if (p.kind === 'video') tile.append(el('span', 'badge', 'video'));
@@ -1450,7 +1479,8 @@ async function doExport() {
   $('#export').disabled = true;
   $('#export-progress').classList.remove('done');
   result.textContent = 'Exporting…';
-  const total = items.length;
+  const rawFor = withRaw() ? items.filter((p) => p.rawName).map((p) => p.id) : [];
+  const total = items.length + (withRaw() ? rawsOf(items).size : 0);
   let done = 0;
   let copied = 0;
   let skipped = 0;
@@ -1462,11 +1492,11 @@ async function doExport() {
   try {
     const plain = items.filter((p) => !editOf(p));
     const edited = items.filter((p) => editOf(p));
-    if (plain.length) {
+    if (plain.length || rawFor.length) {
       const r = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dest: S.dest, ids: plain.map((p) => p.id) }),
+        body: JSON.stringify({ dest: S.dest, ids: plain.map((p) => p.id), rawFor }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'export failed');
       const reader = r.body.getReader();
@@ -1565,6 +1595,7 @@ function renderDest(dest) {
     tile.title = f.name;
     tile.append(thumb, el('div', 'name', f.name));
     if (f.kind === 'video') thumb.append(el('span', 'play', '▶'));
+    else if (f.kind === 'raw') thumb.append(el('span', 'rawlabel', 'RAW'));
     else {
       thumb._load = () => {
         const img = new Image();
@@ -1728,6 +1759,15 @@ function bindUi() {
   $('#help').onclick = () => ($('#help').hidden = true);
   $('#staged-close').onclick = closeStaged;
   $('#export').onclick = doExport;
+  try {
+    $('#with-raw').checked = localStorage.getItem('brackit:withRaw') === '1';
+  } catch {}
+  $('#with-raw').onchange = () => {
+    try {
+      localStorage.setItem('brackit:withRaw', withRaw() ? '1' : '0');
+    } catch {}
+    renderStaged();
+  };
   $('#clear-flags').onclick = () => {
     const items = stagedPhotos();
     const btn = $('#clear-flags');

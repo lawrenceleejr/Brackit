@@ -325,3 +325,9 @@ body.fs #overview { top: 0; }
 .dtile .name { color: var(--muted); font-size: 11px; padding-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* staged photos that export will write: the same amber outline as picks */
 .tile.pending .thumb > img, .tile.pending .thumb > canvas, .tile.pending .thumb > video { box-shadow: 0 0 0 2px var(--accent); }
+
+.raw-opt { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; margin-right: 10px; }
+.raw-opt input { accent-color: var(--accent); margin: 0; }
+.raw-opt:has(input:checked) { color: var(--ink); }
+.tile .rawtag { color: var(--muted); font-size: 10px; letter-spacing: .06em; }
+.dtile .thumb .rawlabel { color: var(--muted); font-size: 11px; letter-spacing: .1em; }

@@ -49,6 +49,7 @@ test.before(async () => {
   fs.writeFileSync(mov, Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 256)));
   fs.utimesSync(mov, new Date(2026, 10, 1, 10, 0, 30), new Date(2026, 10, 1, 10, 0, 30));
   fs.writeFileSync(path.join(dcim, '._DSCF0001.JPG'), Buffer.alloc(10));
+  fs.writeFileSync(path.join(dcim, 'DSCF0001.RAF'), Buffer.from('FUJIFILMCCD-RAW fake raw'));
 
   proc = spawn(BIN, ['--serve', '--no-open', '--port', '0'], { env: { ...process.env, HOME: tmp, USERPROFILE: tmp } });
   base = await new Promise((resolve, reject) => {
@@ -83,6 +84,10 @@ test('groups brackets, labels film sims, keeps singles and videos apart', async 
   assert.equal(p.key, `DSCF0001.JPG:${p.size}:2026:11:01 10:00:00`);
   assert.equal(p.hasPreview, true);
   assert.equal(byName('DSCF0004.JPG').orientation, 6);
+  // the bracket's RAF is attached to all three looks; RAWs aren't sets
+  for (const id of lib.sets[0].photos) assert.equal(lib.photos[id].rawName, 'DSCF0001.RAF');
+  assert.equal(byName('DSCF0004.JPG').rawName, null);
+  assert.ok(!Object.values(lib.photos).some((p) => p.name.endsWith('.RAF')));
 });
 
 test('serves the embedded preview, with orientation grafted on', async () => {
@@ -125,6 +130,17 @@ test('exports originals byte-for-byte and skips ones already there', async () =>
   assert.equal(JSON.parse(again.data.toString().trim().split('\n').at(-1)).skipped, 2);
   const st = (await api('GET', '/api/state')).data;
   assert.ok(st.exported.includes(byName('DSCF0002.JPG').key));
+});
+
+test('exports the RAW once per set when asked', async () => {
+  const dest = path.join(tmp, 'out-raw');
+  const ids = lib.sets[0].photos.slice(0, 2); // two looks share one RAF
+  const r = await api('POST', '/api/export', { dest, ids, rawFor: ids });
+  const end = JSON.parse(r.data.toString().trim().split('\n').at(-1));
+  assert.equal(end.copied, 3);
+  assert.deepEqual(fs.readdirSync(dest).sort(), ['DSCF0001.JPG', 'DSCF0001.RAF', 'DSCF0002.JPG']);
+  const listed = (await api('GET', `/api/dest?path=${encodeURIComponent(dest)}`)).data.files;
+  assert.equal(listed.find((f) => f.name === 'DSCF0001.RAF').kind, 'raw');
 });
 
 test('lists what is already in the export folder, with thumbnails', async () => {
@@ -177,6 +193,7 @@ test('delete moves a set off the card and undo restores it', async () => {
   assert.equal(r.status, 200);
   assert.ok(!fs.existsSync(path.join(dir, 'DSCF0001.JPG')));
   assert.ok(!fs.existsSync(path.join(dir, '._DSCF0001.JPG')), 'AppleDouble sidecar goes too');
+  assert.ok(!fs.existsSync(path.join(dir, 'DSCF0001.RAF')), 'the RAW goes too');
   assert.ok(fs.existsSync(path.join(card, '.brackit-trash')));
   const u = await api('POST', '/api/undo-delete', { token: r.data.token });
   assert.equal(u.status, 200);
@@ -205,7 +222,7 @@ test('survey summarises folders and days; open can be limited to either', async 
     fs.utimesSync(f, day, day);
   }
   const sv = (await api('POST', '/api/survey', { path: card })).data;
-  assert.equal(sv.total, 10);
+  assert.equal(sv.total, 10, 'RAWs are not counted');
   const oct1 = sv.groups.filter((g) => g.day === '2026-10-01');
   assert.deepEqual(oct1, [{ folder: 'DCIM/101_FUJI', day: '2026-10-01', photos: 2, videos: 0 }]);
   const vids = sv.groups.filter((g) => g.videos).map((g) => [g.folder, g.day, g.videos]);

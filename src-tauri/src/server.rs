@@ -301,7 +301,7 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             if let Ok(rd) = fs::read_dir(&dir) {
                 for e in rd.flatten() {
                     let name = e.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') || !(library::is_jpeg(&name) || library::is_video(&name)) {
+                    if name.starts_with('.') || !(library::is_jpeg(&name) || library::is_video(&name) || library::is_raw(&name)) {
                         continue;
                     }
                     let Ok(md) = e.metadata() else { continue };
@@ -315,7 +315,10 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             files.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
             let files: Vec<Value> = files
                 .into_iter()
-                .map(|(name, size, mtime)| json!({ "name": name, "size": size, "mtime": mtime, "kind": if library::is_video(&name) { "video" } else { "photo" } }))
+                .map(|(name, size, mtime)| {
+                    let kind = if library::is_video(&name) { "video" } else if library::is_raw(&name) { "raw" } else { "photo" };
+                    json!({ "name": name, "size": size, "mtime": mtime, "kind": kind })
+                })
                 .collect();
             send_json(req, 200, json!({ "dir": dir.to_string_lossy(), "exists": dir.is_dir(), "files": files }))
         }
@@ -590,6 +593,35 @@ fn export(app: Arc<App>, mut req: Request) {
             .map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|id| lib.photos.get(id).cloned()).collect())
             .unwrap_or_default()
     };
+    // RAW files to copy too (one per set; several picks can share it)
+    let raws: Vec<Photo> = {
+        let lib = app.lib.read().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        body.get("rawFor")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|id| lib.photos.get(id))
+                    .filter_map(|p| {
+                        let raw = p.raw.clone()?;
+                        if !seen.insert(raw.clone()) {
+                            return None;
+                        }
+                        Some(Photo {
+                            name: raw.file_name()?.to_string_lossy().to_string(),
+                            size: p.raw_size,
+                            mtime: fs::metadata(&raw).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as f64).unwrap_or(p.mtime),
+                            file: raw,
+                            key: String::new(),
+                            ..Default::default()
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let photos: Vec<Photo> = photos.into_iter().chain(raws).collect();
     if let Err(e) = fs::create_dir_all(&dest) {
         return err(req, 500, &e.to_string());
     }
@@ -607,7 +639,7 @@ fn export(app: Arc<App>, mut req: Request) {
                 Ok(false) => skipped += 1,
                 Err(e) => failed.push(json!({ "name": p.name, "error": e.to_string() })),
             }
-            if failed.last().map_or(true, |f| f["name"] != p.name) {
+            if !p.key.is_empty() && failed.last().map_or(true, |f| f["name"] != p.name) {
                 done_keys.push(p.key.clone());
             }
             let _ = tx.send(format!("{}\n", json!({ "done": i + 1, "total": total, "name": p.name })).into_bytes());
@@ -716,9 +748,16 @@ impl Deleter {
         };
         let dir = root.join(TRASH).join(&token);
         let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut seen_raw = std::collections::HashSet::new();
         let mut run = || -> io::Result<()> {
             for p in photos {
                 let mut files = vec![p.file.clone()];
+                // the RAW is another version of the same photo: it goes too
+                if let Some(raw) = &p.raw {
+                    if seen_raw.insert(raw.clone()) && raw.exists() {
+                        files.push(raw.clone());
+                    }
+                }
                 let dot = p.dir.join(format!("._{}", p.name)); // macOS AppleDouble sidecar
                 if dot.exists() {
                     files.push(dot);
