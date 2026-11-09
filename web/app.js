@@ -591,6 +591,10 @@ function pump() {
         () => {
           e.done = true;
           e.resolve(e.img);
+          if (e.kind === 'preview' && !dispScheduled && dispQueue.length) {
+            dispScheduled = true;
+            (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
+          }
         },
         (err) => {
           if (err && err.name === 'AbortError') return; // re-requested later if needed
@@ -745,6 +749,87 @@ const thumbReady = (id) => {
   return e && e.done ? e.img : null;
 };
 
+/* Display-sized copies. Painting three 1920 px previews on every flip costs
+   tens of milliseconds of scaling; so, in idle moments, each prefetched
+   preview is drawn once at exactly the size it will be shown (× pixel
+   ratio). A flip then only swaps in small, ready pictures. */
+const DISP = new Map(); // preview url -> { canvas, key }
+const DISP_MAX = 60;
+let dispQueue = [];
+let dispScheduled = false;
+
+// The box a photo of `set` will occupy, without touching the DOM.
+function layoutFor(set) {
+  const stage = $('#stage');
+  const SW = stage.clientWidth;
+  const SH = stage.clientHeight;
+  const gap = 10;
+  const n = set.photos.length;
+  const p0 = photo(set.photos[0]);
+  const ed = editOf(p0);
+  const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
+  let imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
+  let lookW = (SW - gap * (n - 1)) / n;
+  if (n === 3) {
+    const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
+    const rowH = (SH - gap - 2 * CAPTION_H) / 2;
+    const twoOne = Math.min((SW - gap) / 2, rowH * a);
+    if (twoOne > inRow * 1.04) {
+      imgMax = Math.floor(rowH);
+      lookW = (SW - gap) / 2;
+    }
+  }
+  return { imgMax, lookW, a };
+}
+
+function dispKey(set) {
+  const { imgMax, lookW } = layoutFor(set);
+  return `${Math.round(lookW)}x${imgMax}@${dpr()}`;
+}
+
+function displayCopy(url, set) {
+  const d = DISP.get(url);
+  return d && d.key === dispKey(set) ? d.canvas : null;
+}
+
+function queueDisplayCopies() {
+  dispQueue = [];
+  for (let d = 0; d <= AHEAD; d++) {
+    const set = S.view[S.idx + d];
+    if (set && set.kind !== 'video') for (const id of set.photos) if (!editOf(photo(id))) dispQueue.push({ id, set });
+  }
+  if (!dispScheduled) {
+    dispScheduled = true;
+    (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
+  }
+}
+
+function makeDisplayCopy() {
+  dispScheduled = false;
+  while (dispQueue.length) {
+    const { id, set } = dispQueue.shift();
+    const url = previewUrl(id);
+    const e = imageCache.get(url);
+    if (!e || !e.done || !e.img.naturalWidth || displayCopy(url, set)) continue;
+    const { imgMax, lookW, a } = layoutFor(set);
+    const w = Math.min(lookW, imgMax * a);
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * dpr()));
+    c.height = Math.max(1, Math.round((w / a) * dpr()));
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(e.img, 0, 0, c.width, c.height);
+    c.className = 'ready';
+    DISP.set(url, { canvas: c, key: dispKey(set) });
+    while (DISP.size > DISP_MAX) DISP.delete(DISP.keys().next().value);
+    break; // one per idle slot, so a keypress never waits behind this
+  }
+  if (dispQueue.length) {
+    dispScheduled = true;
+    (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
+  }
+}
+
 // Re-rank the preview queue around the current set; cancel what's no longer
 // wanted. Thumbnails are handled by the store above.
 function preloadAround() {
@@ -777,6 +862,7 @@ function preloadAround() {
   }
   for (const [url, pr] of want) getImage(url, pr);
   scheduleThumbs();
+  queueDisplayCopies();
 }
 
 /* ------------------------------------------------------------ edits (straighten & crop) */
@@ -1037,7 +1123,7 @@ function render() {
     const showPreview = (img) => {
       if (token !== renderToken || !img.naturalWidth) return;
       sharp = true;
-      const node = edit ? renderEdited(img, edit, frame.clientWidth * dpr() * 1.25) : img;
+      const node = edit ? renderEdited(img, edit, frame.clientWidth * dpr() * 1.25) : displayCopy(previewUrl(id), set) || img;
       node.classList.add('ready');
       frame.replaceChildren(node);
       if (S.showHist) {
