@@ -343,6 +343,27 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             };
             serve_image(req, &p, Size::Thumb)
         }
+        ("/api/eject", _, true, _) => {
+            let body = read_json(&mut req);
+            let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "no path") };
+            let Some(vol) = volume_of(&p).filter(|v| v["ejectable"] == true) else {
+                return err(req, 400, "That folder isn't on a removable card");
+            };
+            let mount = PathBuf::from(vol["path"].as_str().unwrap_or_default());
+            // finish deletions still in their undo window, and let go of the card
+            app.deleter.purge_all();
+            match eject(&mount) {
+                Ok(()) => {
+                    let mut lib = app.lib.write().unwrap();
+                    if lib.root.as_ref().map_or(false, |r| r.starts_with(&mount)) {
+                        *lib = Library::default();
+                    }
+                    drop(lib);
+                    send_json(req, 200, json!({ "ok": true, "name": vol["name"], "path": vol["path"] }))
+                }
+                Err(e) => err(req, 409, &e),
+            }
+        }
         ("/api/survey", _, true, _) => {
             let body = read_json(&mut req);
             let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "Folder not found") };
@@ -350,7 +371,9 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             if !p.is_dir() {
                 return err(req, 400, "Folder not found");
             }
-            send_json(req, 200, library::survey(&p))
+            let mut sv = library::survey(&p);
+            sv["volume"] = json!(volume_of(&p));
+            send_json(req, 200, sv)
         }
         ("/api/open", _, true, _) => {
             let body = read_json(&mut req);
@@ -447,11 +470,13 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
 }
 
 fn summary(lib: &Library) -> Value {
+    let volume = lib.root.as_deref().and_then(volume_of);
     let photos: serde_json::Map<String, Value> =
         lib.photos.iter().map(|(id, p)| (id.clone(), serde_json::to_value(p.public()).unwrap_or(Value::Null))).collect();
     json!({
         "root": lib.root.as_ref().map(|r| r.to_string_lossy()),
         "scope": { "folder": lib.scope.folder, "from": lib.scope.from, "to": lib.scope.to },
+        "volume": volume,
         "sets": lib.sets,
         "photos": photos,
     })
@@ -838,11 +863,65 @@ fn list_volumes() -> Vec<Value> {
         for e in rd.flatten() {
             let p = e.path();
             if p.join("DCIM").is_dir() {
-                out.push(json!({ "name": e.file_name().to_string_lossy(), "path": p.to_string_lossy() }));
+                let ejectable = volume_of(&p).map_or(false, |v| v["ejectable"] == true);
+                out.push(json!({ "name": e.file_name().to_string_lossy(), "path": p.to_string_lossy(), "ejectable": ejectable }));
             }
         }
     }
     out
+}
+
+/// The removable volume a path lives on, if any: {path, name, ejectable}.
+/// Internal disks and ordinary folders return ejectable=false (or None).
+fn volume_of(path: &Path) -> Option<Value> {
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if cfg!(target_os = "macos") {
+        // /Volumes/<name>/… (the boot disk's /Volumes entry resolves to "/")
+        let rel = path.strip_prefix("/Volumes").ok()?;
+        let name = rel.components().next()?.as_os_str().to_string_lossy().to_string();
+        let mount = Path::new("/Volumes").join(&name);
+        let info = std::process::Command::new("diskutil").args(["info", "-plist"]).arg(&mount).output().ok()?;
+        let plist = String::from_utf8_lossy(&info.stdout);
+        let flag = |k: &str| {
+            plist
+                .split(&format!("<key>{}</key>", k))
+                .nth(1)
+                .map_or(false, |rest| rest.trim_start().starts_with("<true/>"))
+        };
+        let ejectable = flag("Ejectable") || flag("RemovableMedia") || flag("Removable");
+        return Some(json!({ "path": mount.to_string_lossy(), "name": name, "ejectable": ejectable }));
+    }
+    if cfg!(target_os = "linux") {
+        let out = std::process::Command::new("findmnt").args(["-n", "-o", "TARGET", "--target"]).arg(&path).output().ok()?;
+        let mount = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if mount.is_empty() {
+            return None;
+        }
+        let ejectable = mount.starts_with("/media/") || mount.starts_with("/run/media/");
+        let name = Path::new(&mount).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        return Some(json!({ "path": mount, "name": name, "ejectable": ejectable }));
+    }
+    None
+}
+
+fn eject(mount: &Path) -> Result<(), String> {
+    let run = |cmd: &str, args: &[&str]| -> Result<(), String> {
+        let out = std::process::Command::new(cmd).args(args).arg(mount).output().map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let msg = if msg.is_empty() { String::from_utf8_lossy(&out.stdout).trim().to_string() } else { msg };
+            Err(if msg.is_empty() { "The card couldn't be ejected".into() } else { msg })
+        }
+    };
+    if cfg!(target_os = "macos") {
+        run("diskutil", &["eject"])
+    } else if cfg!(target_os = "linux") {
+        run("gio", &["mount", "-e"]).or_else(|_| run("umount", &[]))
+    } else {
+        Err("Eject isn't supported on this system — use your system's eject instead".into())
+    }
 }
 
 fn mac_choose_folder(prompt: &str) -> Option<String> {

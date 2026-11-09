@@ -15,6 +15,7 @@
     </div>
     <div class="center"><span id="counter"></span></div>
     <div class="right">
+      <button id="eject-btn" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
       <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
       <button id="staged-btn" class="link" title="Staged for export (S)">Staged <span id="staged-count" class="num">0</span></button>
       <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
@@ -42,7 +43,10 @@
     <div class="survey-inner">
       <div class="survey-head">
         <h1 id="survey-name"></h1>
-        <button id="survey-back" class="link">Other card</button>
+        <span class="survey-head-actions">
+          <button id="survey-eject" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
+          <button id="survey-back" class="link">Other card</button>
+        </span>
       </div>
       <div id="survey-folders-row" class="survey-row">
         <div class="survey-label">Folder</div>
@@ -162,6 +166,7 @@
         <dt>U</dt><dd>jump to next unflagged set</dd>
         <dt>G</dt><dd>overview: thumbnails of every set</dd>
         <dt>O</dt><dd>open another folder</dd>
+        <dt>⌘ E</dt><dd>eject the card</dd>
         <dt>Esc</dt><dd>back</dd>
       </dl>
     </div>

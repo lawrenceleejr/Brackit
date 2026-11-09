@@ -346,3 +346,8 @@ body.fs #overview { top: 0; }
 #peek .peek-img { position: relative; }
 #peek.picked .peek-img::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--accent); }
 body.fs #peek { display: none; }
+
+.survey-head-actions { display: flex; gap: 18px; }
+.volume { position: relative; }
+.volume .eject { margin-left: 14px; color: var(--muted); padding: 0 2px; }
+.volume .eject:hover { color: var(--ink); }

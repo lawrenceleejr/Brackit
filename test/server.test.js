@@ -241,3 +241,13 @@ test('survey summarises folders and days; open can be limited to either', async 
   const lib2 = (await api('GET', '/api/library')).data;
   assert.equal(lib2.sets.length, all.sets.length, 'reloading the window gets the loaded library without rescanning');
 });
+
+test('ordinary folders are not ejectable and refuse to eject', async () => {
+  const l = (await api('GET', '/api/library')).data;
+  assert.ok(!(l.volume && l.volume.ejectable), 'a temp folder is not removable media');
+  const r = await api('POST', '/api/eject', { path: card });
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /isn't on a removable card/);
+  assert.ok(fs.existsSync(card), 'nothing happened to the folder');
+  assert.ok((await api('GET', '/api/library')).data.sets.length > 0, 'library still loaded');
+});

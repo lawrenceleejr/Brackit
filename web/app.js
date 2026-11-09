@@ -70,19 +70,29 @@ async function showWelcome() {
   $('#survey').hidden = true;
   $('#welcome').hidden = false;
   $('#bar .center').hidden = true;
-  $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = true;
+  $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = $('#eject-btn').hidden = true;
   $('#folder').textContent = '';
   const box = $('#volumes');
   box.innerHTML = '';
   const { volumes } = await api('GET', '/api/volumes').catch(() => ({ volumes: [] }));
-  const entries = volumes.map((v) => ({ name: v.name, path: v.path, where: 'card' }));
+  const entries = volumes.map((v) => ({ name: v.name, path: v.path, where: 'card', ejectable: v.ejectable }));
   if (S.server.lastRoot && !entries.some((e) => e.path === S.server.lastRoot)) {
     entries.push({ name: S.server.lastRoot.split('/').filter(Boolean).pop() || '/', path: S.server.lastRoot, where: 'last opened' });
   }
   for (const v of entries) {
     const b = el('button', 'volume');
-    b.append(el('span', 'name', v.name), el('span', 'where', v.where === 'card' ? v.path : v.where));
+    const where = el('span', 'where', v.where === 'card' ? v.path : v.where);
+    b.append(el('span', 'name', v.name), where);
     b.onclick = () => openFolder(v.path);
+    if (v.ejectable) {
+      const ej = el('span', 'eject', '⏏');
+      ej.title = `Eject ${v.name}`;
+      ej.onclick = (e) => {
+        e.stopPropagation();
+        ejectCard(v.path, v.name);
+      };
+      where.append(ej);
+    }
     box.append(b);
   }
   $('#path-input').value = '';
@@ -95,6 +105,42 @@ async function chooseFolder(prompt, defaultPath) {
   }
   const { path } = await api('POST', '/api/pick', { prompt, defaultPath });
   return path;
+}
+
+/* ------------------------------------------------------------ eject */
+
+// Let go of everything that might hold the card (playing video, image
+// downloads), then ask the server to eject it. Picks are kept for later.
+async function ejectCard(path, name) {
+  if (exporting) return toast('Wait for the export to finish', { ms: 2500 });
+  const label = name || 'Card';
+  toast(`Ejecting ${label}…`, { ms: 10000 });
+  document.querySelectorAll('video').forEach((v) => {
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+  });
+  for (const e of imageCache.values()) drop(e);
+  imageCache.clear();
+  let res;
+  try {
+    res = await api('POST', '/api/eject', { path });
+  } catch (e) {
+    toast(e.message, { ms: 5000 });
+    if (S.lib && !$('#viewer').hidden) render(); // still mounted: carry on
+    return;
+  }
+  surveyToken++;
+  if (S.solo) closeSolo();
+  if (!$('#overview').hidden) closeOverview();
+  if (!$('#staged').hidden) closeStaged();
+  const mount = res.path || path;
+  if (S.lib && (S.lib.root === mount || S.lib.root.startsWith(mount + '/'))) {
+    S.lib = null; // the loaded card is gone
+    $('#stage').innerHTML = '';
+  }
+  await showWelcome();
+  toast(`${label} ejected — safe to remove`, { ms: 3500 });
 }
 
 /* ------------------------------------------------------------ survey: choose what to load */
@@ -137,6 +183,8 @@ function showSurvey(sv) {
   $('#survey-name').textContent = sv.root.split(/[\\/]/).filter(Boolean).pop() || sv.root;
   $('#survey-name').title = sv.root;
   $('#survey-status').textContent = '';
+  $('#survey-eject').hidden = !(sv.volume && sv.volume.ejectable);
+  $('#survey-eject').onclick = () => ejectCard(sv.root, sv.volume.name);
   // folders: those that directly hold photos or videos
   const folders = new Map();
   for (const g of sv.groups) folders.set(g.folder, (folders.get(g.folder) || 0) + g.photos + g.videos);
@@ -380,6 +428,7 @@ function loadLibrary(lib) {
   $('#viewer').hidden = false;
   $('#bar .center').hidden = false;
   $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = false;
+  $('#eject-btn').hidden = !(lib.volume && lib.volume.ejectable);
   $('#folder').textContent = scopeLabel(lib);
   $('#folder').title = lib.root + ' — choose another card, folder or dates (O)';
   render();
@@ -1842,6 +1891,7 @@ function bindUi() {
   bindSurvey();
   $('#staged-btn').onclick = () => openStaged();
   $('#ov-btn').onclick = () => openOverview();
+  $('#eject-btn').onclick = () => S.lib && ejectCard(S.lib.root, S.lib.volume && S.lib.volume.name);
   $('#fs-btn').onclick = toggleFullscreen;
   $('#help-btn').onclick = () => ($('#help').hidden = !$('#help').hidden);
   $('#help').onclick = () => ($('#help').hidden = true);
@@ -1980,7 +2030,14 @@ function onKey(e) {
   const cmd = e.metaKey || e.ctrlKey;
   const delKey = cmd && (e.key === 'Backspace' || e.key === 'Delete');
   const undoKey = cmd && !e.shiftKey && (e.key === 'z' || e.key === 'Z');
-  if ((e.metaKey || e.ctrlKey || e.altKey) && !digit && !delKey && !undoKey) return;
+  const ejectKey = cmd && (e.key === 'e' || e.key === 'E');
+  if ((e.metaKey || e.ctrlKey || e.altKey) && !digit && !delKey && !undoKey && !ejectKey) return;
+  if (ejectKey) {
+    e.preventDefault();
+    if (S.lib && S.lib.volume && S.lib.volume.ejectable) ejectCard(S.lib.root, S.lib.volume.name);
+    else if (!$('#survey').hidden && SV.data && SV.data.volume && SV.data.volume.ejectable) ejectCard(SV.data.root, SV.data.volume.name);
+    return;
+  }
   const k = digit ? digit[1] : delKey ? 'DeleteSet' : undoKey ? 'Undo' : e.key;
 
   if (!$('#help').hidden) {
