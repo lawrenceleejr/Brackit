@@ -16,7 +16,7 @@
     "test:ui": "node --test --test-concurrency=1 test/ui/*.test.js",
     "lite": "node scripts/build-lite.mjs && node scripts/serve-lite.mjs",
     "build:lite": "node scripts/build-lite.mjs",
-    "test:lite": "node --test test/lite.test.js"
+    "test:lite": "node --test --test-concurrency=1 test/ui/lite.test.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
