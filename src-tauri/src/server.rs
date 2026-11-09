@@ -251,7 +251,10 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             let photo = app.lib.read().unwrap().photos.get(id).cloned();
             return match photo {
                 Some(p) if p.video => serve_video(req, &p),
-                Some(p) => serve_image(req, &p, params.get("full").map(|v| v == "1").unwrap_or(false)),
+                Some(p) => {
+                    let flag = |k: &str| params.get(k).map(|v| v == "1").unwrap_or(false);
+                    serve_image(req, &p, if flag("full") { Size::Full } else if flag("thumb") { Size::Thumb } else { Size::Preview })
+                }
                 None => err(req, 404, "not found"),
             };
         }
@@ -407,11 +410,24 @@ fn summary(lib: &Library) -> Value {
 
 /* ------------------------------------------------------------ media */
 
-fn serve_image(req: Request, p: &Photo, full: bool) {
+#[derive(PartialEq)]
+enum Size {
+    Thumb,
+    Preview,
+    Full,
+}
+
+fn serve_image(req: Request, p: &Photo, size: Size) {
     let cache = header("Cache-Control", "private, max-age=3600");
     let jpeg_type = header("Content-Type", "image/jpeg");
-    if !full {
-        if let Some((start, len)) = p.preview {
+    // embedded JPEGs: the ~160px EXIF thumbnail or the ~1920px MPF preview
+    let range = match size {
+        Size::Thumb => p.thumb.or(p.preview),
+        Size::Preview => p.preview,
+        Size::Full => None,
+    };
+    {
+        if let Some((start, len)) = range {
             let mut buf = vec![0u8; len as usize];
             let ok = File::open(&p.file).and_then(|mut f| {
                 f.seek(SeekFrom::Start(start))?;

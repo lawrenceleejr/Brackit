@@ -28,6 +28,7 @@ pub struct Photo {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub preview: Option<(u64, u64)>,
+    pub thumb: Option<(u64, u64)>,
     pub video: bool,
 }
 
@@ -50,6 +51,7 @@ pub struct PublicPhoto<'a> {
     height: Option<u32>,
     kind: &'static str,
     has_preview: bool,
+    has_thumb: bool,
 }
 
 impl Photo {
@@ -71,6 +73,7 @@ impl Photo {
             height: self.height,
             kind: if self.video { "video" } else { "photo" },
             has_preview: self.preview.is_some(),
+            has_thumb: self.thumb.is_some(),
         }
     }
 }
@@ -341,6 +344,7 @@ fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
         width: meta.width.or(meta.frame_width),
         height: meta.height.or(meta.frame_height),
         preview: meta.preview,
+        thumb: meta.thumb,
         video,
         name,
     })

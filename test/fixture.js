@@ -46,7 +46,9 @@ function makerNote({ filmMode, saturation }) {
   return Buffer.concat([hdr, d.buf, d.extra]);
 }
 
-function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, model = 'X100VI', width = 7728, height = 5152 }) {
+const FAKE_THUMB = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+
+function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, model = 'X100VI', width = 7728, height = 5152, thumb = FAKE_THUMB }) {
   // Layout (tiff offsets): 8 IFD0 | IFD0 extra | ExifIFD | Exif extra
   const ifd0Entries = [
     { tag: 0x010f, type: 2, count: 9, value: ascii('FUJIFILM') },
@@ -71,7 +73,21 @@ function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, mod
   const de = ifd(exifEntries, exifStart, exifStart + exifSize);
   const tiffHead = Buffer.from([0x49, 0x49, 0x2a, 0x00, 8, 0, 0, 0]);
   const pad0 = Buffer.alloc(exifStart - (8 + d0.buf.length + d0.extra.length));
-  const tiff = Buffer.concat([tiffHead, d0.buf, d0.extra, pad0, de.buf, de.extra]);
+  // IFD1: the small thumbnail, linked from IFD0's next-IFD pointer
+  let ifd1Start = exifStart + de.buf.length + de.extra.length;
+  ifd1Start += ifd1Start % 2;
+  const ifd1Size = 2 + 2 * 12 + 4;
+  const d1 = ifd(
+    [
+      { tag: 0x0201, type: 4, count: 1, value: ifd1Start + ifd1Size },
+      { tag: 0x0202, type: 4, count: 1, value: thumb.length },
+    ],
+    ifd1Start,
+    ifd1Start + ifd1Size
+  );
+  d0.buf.writeUInt32LE(ifd1Start, d0.buf.length - 4);
+  const pad1 = Buffer.alloc(ifd1Start - (exifStart + de.buf.length + de.extra.length));
+  const tiff = Buffer.concat([tiffHead, d0.buf, d0.extra, pad0, de.buf, de.extra, pad1, d1.buf, thumb]);
   const payload = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
   const seg = Buffer.from([0xff, 0xe1, 0, 0]);
   seg.writeUInt16BE(payload.length + 2, 2);
@@ -105,8 +121,8 @@ function mpfApp2(previewOffset, previewSize, mainSize) {
 
 // image: optional real JPEG (Buffer) for the main picture; preview: optional
 // real JPEG for the MPF preview.
-function buildJpeg(meta, { image, preview } = {}) {
-  const app1 = exifApp1(meta);
+function buildJpeg(meta, { image, preview, thumb } = {}) {
+  const app1 = exifApp1({ ...meta, ...(thumb ? { thumb } : {}) });
   const body = image ? image.subarray(2) : FAKE_IMAGE; // drop SOI of the real image
   const prev = preview || Buffer.concat([Buffer.from([0xff, 0xd8]), FAKE_IMAGE]);
   // MPF segment size is constant, compute with placeholder then patch.

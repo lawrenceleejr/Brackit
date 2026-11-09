@@ -70,7 +70,7 @@ async function showWelcome() {
   $('#survey').hidden = true;
   $('#welcome').hidden = false;
   $('#bar .center').hidden = true;
-  $('#staged-btn').hidden = $('#fs-btn').hidden = true;
+  $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = true;
   $('#folder').textContent = '';
   const box = $('#volumes');
   box.innerHTML = '';
@@ -379,7 +379,7 @@ function loadLibrary(lib) {
   $('#survey').hidden = true;
   $('#viewer').hidden = false;
   $('#bar .center').hidden = false;
-  $('#staged-btn').hidden = $('#fs-btn').hidden = false;
+  $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = false;
   $('#folder').textContent = scopeLabel(lib);
   $('#folder').title = lib.root + ' — choose another card, folder or dates (O)';
   render();
@@ -402,37 +402,122 @@ function applyFilter(keep = true) {
 
 /* ------------------------------------------------------------ image cache */
 
-const imageCache = new Map(); // url -> {img, promise, done}
-function getImage(url) {
+/* Image loading. Every preview goes through one prioritised queue: the set on
+   screen first, then the sets ahead in order, then one behind. Moving on
+   re-ranks the queue and cancels downloads that are no longer wanted, so the
+   photo you're looking at never waits behind prefetches. Decoded images are
+   kept in a small LRU cache. */
+const MAX_INFLIGHT = 6; // browsers allow ~6 connections per host
+const AHEAD = 8; // sets to prefetch forward
+const CACHE_MAX = 90; // decoded previews kept (~3 per set)
+const imageCache = new Map(); // url -> entry
+const queue = []; // entries waiting to start
+let inflight = 0;
+
+function makeEntry(url, priority) {
+  const entry = { url, priority, img: new Image(), done: false, started: false, ctrl: null, objectUrl: null };
+  entry.img.decoding = 'async';
+  entry.img.draggable = false;
+  entry.promise = new Promise((resolve) => (entry.resolve = resolve));
+  return entry;
+}
+
+function getImage(url, priority = 0) {
   let entry = imageCache.get(url);
   if (entry) {
     imageCache.delete(url); // refresh LRU position
     imageCache.set(url, entry);
-    return entry;
+    if (!entry.started && priority < entry.priority) entry.priority = priority;
+  } else {
+    entry = makeEntry(url, priority);
+    imageCache.set(url, entry);
+    queue.push(entry);
+    evict();
   }
-  const img = new Image();
-  img.decoding = 'async';
-  img.draggable = false;
-  img.src = url;
-  entry = { img, done: false };
-  entry.promise = img.decode().then(
-    () => ((entry.done = true), img),
-    () => ((entry.done = true), img)
-  );
-  imageCache.set(url, entry);
-  while (imageCache.size > 48) imageCache.delete(imageCache.keys().next().value);
+  pump();
   return entry;
 }
+
+function evict() {
+  // decoded 40 MP originals are ~160 MB each: keep only the two most recent
+  const fulls = [...imageCache.keys()].filter((u) => u.includes('full=1'));
+  for (const u of fulls.slice(0, Math.max(0, fulls.length - 2))) {
+    drop(imageCache.get(u));
+    imageCache.delete(u);
+  }
+  for (const [url, e] of imageCache) {
+    if (imageCache.size <= CACHE_MAX) break;
+    if (e.priority === 0 && !e.done) continue; // never drop what's on screen
+    drop(e);
+    imageCache.delete(url);
+  }
+}
+
+function drop(e) {
+  if (e.ctrl && !e.done) e.ctrl.abort();
+  const qi = queue.indexOf(e);
+  if (qi >= 0) queue.splice(qi, 1);
+  if (e.objectUrl) setTimeout(() => URL.revokeObjectURL(e.objectUrl), 1000);
+}
+
+function pump() {
+  while (inflight < MAX_INFLIGHT && queue.length) {
+    queue.sort((a, b) => a.priority - b.priority);
+    const e = queue.shift();
+    e.started = true;
+    e.ctrl = new AbortController();
+    inflight++;
+    fetch(e.url, { signal: e.ctrl.signal })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(r.status))))
+      .then((blob) => {
+        e.objectUrl = URL.createObjectURL(blob);
+        e.img.src = e.objectUrl;
+        return e.img.decode().catch(() => {});
+      })
+      .then(
+        () => {
+          e.done = true;
+          e.resolve(e.img);
+        },
+        (err) => {
+          if (err && err.name === 'AbortError') return; // re-requested later if needed
+          e.done = true;
+          e.resolve(e.img);
+        }
+      )
+      .finally(() => {
+        inflight--;
+        pump();
+      });
+  }
+}
+
 const previewUrl = (id) => `/api/img/${id}`;
 const fullUrl = (id) => `/api/img/${id}?full=1`;
+const thumbUrl = (id) => `/api/img/${id}?thumb=1`;
 const photo = (id) => S.lib.photos[id];
 
+// Re-rank the queue around the current set; cancel what's no longer wanted.
 function preloadAround() {
-  for (const d of [1, 2, -1, 3, -2]) {
-    const set = S.view[S.idx + d];
-    if (!set || set.kind === 'video') continue;
-    for (const id of set.photos) getImage(previewUrl(id));
+  const want = new Map(); // url -> priority
+  const add = (set, pr) => {
+    if (!set || set.kind === 'video') return;
+    set.photos.forEach((id, i) => want.set(previewUrl(id), pr + i * 0.01));
+  };
+  add(S.view[S.idx], 0);
+  for (let d = 1; d <= AHEAD; d++) add(S.view[S.idx + d], d);
+  add(S.view[S.idx - 1], 1.5);
+  add(S.view[S.idx - 2], AHEAD + 1);
+  for (const [url, e] of [...imageCache]) {
+    if (e.done) continue;
+    if (want.has(url)) {
+      e.priority = want.get(url);
+    } else if (!url.includes('full=1')) {
+      drop(e); // stale prefetch: free the connection for what matters now
+      imageCache.delete(url);
+    }
   }
+  for (const [url, pr] of want) getImage(url, pr);
 }
 
 /* ------------------------------------------------------------ edits (straighten & crop) */
@@ -596,11 +681,13 @@ function render() {
   try {
     localStorage.setItem(idxKey(), S.idx);
   } catch {}
+  preloadAround(); // rank this set first before anything else is requested
   $('#counter').innerHTML = `<b>${S.idx + 1}</b> / ${S.view.length}`;
   $('#set-date').textContent = fmtDate(set.dateTime);
   const names = set.photos.map((id) => photo(id).name);
   $('#set-files').textContent = names.length > 1 ? `${names[0]} – ${names[names.length - 1]}` : names[0];
 
+  layoutStage(stage, set);
   set.photos.forEach((id, pos) => {
     const p = photo(id);
     const look = el('div', 'look');
@@ -646,8 +733,34 @@ function render() {
   });
   S.hoverPos = null;
   drawTicks();
-  preloadAround();
   if (S.solo) renderSolo();
+}
+
+/* Three looks either sit in a row or as 2 + 1 (two on top, one centred
+   below); whichever shows the photos bigger wins. On most screens that makes
+   landscape brackets 2 + 1. */
+const CAPTION_H = 30;
+function photoAspect(p) {
+  let w = p.width || 3;
+  let h = p.height || 2;
+  if (p.orientation >= 5 && p.orientation <= 8) [w, h] = [h, w];
+  return w / h;
+}
+function layoutStage(stage, set) {
+  stage.classList.remove('g21');
+  stage.style.removeProperty('--img-max');
+  if (set.photos.length !== 3 || set.kind === 'video') return;
+  const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
+  const SW = stage.clientWidth;
+  const SH = stage.clientHeight;
+  const a = photoAspect(photo(set.photos[0]));
+  const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
+  const rowH = (SH - gap - 2 * CAPTION_H) / 2;
+  const twoOne = Math.min((SW - gap) / 2, rowH * a);
+  if (twoOne > inRow * 1.04) {
+    stage.classList.add('g21');
+    stage.style.setProperty('--img-max', `${Math.floor(rowH)}px`);
+  }
 }
 
 function go(delta) {
@@ -706,6 +819,113 @@ function drawTicks() {
   ctx.fillRect(x - (tw < 2 ? 0 : 0), 0, Math.max(tw, 1.5), h);
 }
 
+/* ------------------------------------------------------------ overview (thumbnail grid) */
+
+/* Every set as a small tile, grouped by day, for scrolling around a card
+   quickly. Uses the ~160 px thumbnail embedded in each JPEG header, so even
+   thousands of tiles cost almost nothing to load. */
+const OV = { tiles: [], cursor: 0, io: null };
+
+function openOverview() {
+  if (!S.lib || !S.view.length) return;
+  if (S.solo) closeSolo();
+  const grid = $('#ov-grid');
+  grid.innerHTML = '';
+  if (OV.io) OV.io.disconnect();
+  OV.io = new IntersectionObserver(
+    (entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        OV.io.unobserve(en.target);
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = en.target.dataset.src;
+        img.alt = '';
+        en.target.append(img);
+      }
+    },
+    { root: $('#overview'), rootMargin: '600px 0px' }
+  );
+  OV.tiles = [];
+  let day = null;
+  let row = null;
+  const perDay = new Map();
+  for (const set of S.view) {
+    const d = (set.dateTime || '').slice(0, 10);
+    perDay.set(d, (perDay.get(d) || 0) + 1);
+  }
+  S.view.forEach((set, i) => {
+    const d = (set.dateTime || '').slice(0, 10);
+    if (d !== day) {
+      day = d;
+      const count = perDay.get(d);
+      const h = el('div', 'ov-day');
+      h.append(el('span', '', d ? niceDay(d.replace(/:/g, '-')) : 'Undated'), el('span', 'muted', ` ${fmtN(count)}`));
+      grid.append(h);
+      row = el('div', 'ov-row');
+      grid.append(row);
+    }
+    const pick = selectedPos(set);
+    const shown = photo(set.photos[pick ?? 0]);
+    const tile = el('button', 'ov-tile');
+    if (pick != null) tile.classList.add('picked');
+    if (set.kind === 'video') tile.classList.add('video');
+    if (i === S.idx) tile.classList.add('current');
+    tile.title = `${set.photos.map((id) => photo(id).name).join(', ')}${shown.filmSim ? ' · ' + shown.filmSim : ''}`;
+    if (set.kind === 'video') tile.append(el('span', 'ov-video', '▶'));
+    else {
+      tile.dataset.src = shown.hasThumb ? thumbUrl(shown.id) : previewUrl(shown.id);
+      OV.io.observe(tile);
+    }
+    if (set.photos.length > 1) tile.append(el('span', 'ov-n', String(set.photos.length)));
+    tile.onclick = () => closeOverview(i);
+    row.append(tile);
+    OV.tiles.push(tile);
+  });
+  OV.cursor = S.idx;
+  $('#overview').hidden = false;
+  moveOverviewCursor(S.idx, 'center');
+}
+
+function closeOverview(jumpTo) {
+  $('#overview').hidden = true;
+  if (OV.io) OV.io.disconnect();
+  $('#ov-grid').innerHTML = '';
+  OV.tiles = [];
+  if (jumpTo != null && jumpTo !== S.idx) {
+    S.idx = jumpTo;
+    render();
+  }
+}
+
+function moveOverviewCursor(i, block = 'nearest') {
+  i = clamp(i, 0, OV.tiles.length - 1);
+  OV.tiles[OV.cursor]?.classList.remove('cursor');
+  OV.cursor = i;
+  const t = OV.tiles[i];
+  t.classList.add('cursor');
+  t.scrollIntoView({ block });
+}
+
+// up/down: the tile in the next/previous visual row closest in x
+function overviewVertical(dir) {
+  const cur = OV.tiles[OV.cursor].getBoundingClientRect();
+  const cx = cur.left + cur.width / 2;
+  let best = null;
+  let bestRowTop = null;
+  for (let k = 1; k < 400; k++) {
+    const j = OV.cursor + dir * k;
+    if (j < 0 || j >= OV.tiles.length) break;
+    const r = OV.tiles[j].getBoundingClientRect();
+    if (dir > 0 ? r.top <= cur.top + 1 : r.top >= cur.top - 1) continue;
+    if (bestRowTop == null) bestRowTop = r.top;
+    if (Math.abs(r.top - bestRowTop) > 1) break;
+    const dist = Math.abs(r.left + r.width / 2 - cx);
+    if (!best || dist < best.dist) best = { j, dist };
+  }
+  if (best) moveOverviewCursor(best.j);
+}
+
 /* ------------------------------------------------------------ solo (one look, large) */
 
 // opts.fullscreen: also take the whole screen; leaving the view restores it.
@@ -759,14 +979,12 @@ function renderSolo() {
       show(edit ? renderEdited(img, edit, frame.clientWidth * dpr()) : img.cloneNode());
     }
   });
-  const full = new Image();
-  full.decoding = 'async';
-  full.src = fullUrl(id);
-  full.decode().then(() => {
-    if (token !== soloToken) return;
+  // full resolution jumps the queue ahead of every prefetch
+  getImage(fullUrl(id), -1).promise.then((full) => {
+    if (token !== soloToken || !full.naturalWidth) return;
     frame.dataset.id = id;
     show(edit ? renderEdited(full, edit) : full);
-  }, () => {});
+  });
 }
 
 // Caption for the inspect view: a key per look — the one on screen is
@@ -1352,6 +1570,7 @@ function bindUi() {
   $('#folder').onclick = () => (S.lib ? openFolder(S.lib.root) : showWelcome());
   bindSurvey();
   $('#staged-btn').onclick = () => openStaged();
+  $('#ov-btn').onclick = () => openOverview();
   $('#fs-btn').onclick = toggleFullscreen;
   $('#help-btn').onclick = () => ($('#help').hidden = !$('#help').hidden);
   $('#help').onclick = () => ($('#help').hidden = true);
@@ -1473,6 +1692,20 @@ function onKey(e) {
     else if (k === '[' || k === '{') setAngle(S.editor.angle - (e.shiftKey ? 1 : 0.1));
     else if (k === ']' || k === '}') setAngle(S.editor.angle + (e.shiftKey ? 1 : 0.1));
     else if (k === 'r' || k === 'R') $('#edit-reset').click();
+    else return;
+    return e.preventDefault();
+  }
+
+  if (!$('#overview').hidden) {
+    if (k === 'ArrowRight') moveOverviewCursor(OV.cursor + 1);
+    else if (k === 'ArrowLeft') moveOverviewCursor(OV.cursor - 1);
+    else if (k === 'ArrowDown') overviewVertical(1);
+    else if (k === 'ArrowUp') overviewVertical(-1);
+    else if (k === 'Home') moveOverviewCursor(0);
+    else if (k === 'End') moveOverviewCursor(OV.tiles.length - 1);
+    else if (k === 'Enter' || k === ' ') closeOverview(OV.cursor);
+    else if (k === 'Escape' || k === 'g' || k === 'G') closeOverview();
+    else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
   }
@@ -1601,6 +1834,10 @@ function onKey(e) {
     case 'u':
     case 'U':
       nextUnflagged();
+      break;
+    case 'g':
+    case 'G':
+      openOverview();
       break;
     case 'o':
     case 'O':

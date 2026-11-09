@@ -95,6 +95,17 @@ test('serves the embedded preview, with orientation grafted on', async () => {
   assert.deepEqual(full.data, fs.readFileSync(path.join(card, 'DCIM/100_FUJI/DSCF0004.JPG')));
 });
 
+test('serves the small EXIF thumbnail', async () => {
+  const p = byName('DSCF0004.JPG');
+  assert.equal(p.hasThumb, true);
+  const r = await api('GET', `/api/img/${p.id}?thumb=1`);
+  assert.equal(r.status, 200);
+  assert.equal(r.data[0], 0xff);
+  assert.equal(r.data[1], 0xd8);
+  assert.equal(parseHeader(r.data).orientation, 6, 'orientation grafted on');
+  assert.deepEqual([...r.data.subarray(-2)], [0xff, 0xd9]);
+});
+
 test('streams video with byte ranges', async () => {
   const id = byName('DSCF0005.MOV').id;
   const r = await fetch(`${base}/api/img/${id}`, { headers: { Range: 'bytes=10-19' } });

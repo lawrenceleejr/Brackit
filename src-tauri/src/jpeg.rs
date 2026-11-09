@@ -19,6 +19,8 @@ pub struct Meta {
     pub film_sim: Option<String>,
     /// Byte range of the embedded MPF preview JPEG (Fuji: ~1920px).
     pub preview: Option<(u64, u64)>,
+    /// Byte range of the EXIF IFD1 thumbnail JPEG (~160px).
+    pub thumb: Option<(u64, u64)>,
 }
 
 fn film_mode(v: u32) -> Option<&'static str> {
@@ -172,7 +174,24 @@ fn parse_fuji_makernote(buf: &[u8], start: usize, len: usize, out: &mut Meta) {
 
 fn parse_exif(buf: &[u8], base: usize, out: &mut Meta) {
     let Some(t) = tiff_at(buf, base) else { return };
-    let ifd0 = t.ifd(t.u32(4) as usize);
+    let ifd0_off = t.u32(4) as usize;
+    let ifd0 = t.ifd(ifd0_off);
+    // IFD1 (after IFD0) carries the small thumbnail
+    if t.ok(ifd0_off, 2) {
+        let next_at = ifd0_off + 2 + t.u16(ifd0_off) as usize * 12;
+        if t.ok(next_at, 4) {
+            let ifd1_off = t.u32(next_at) as usize;
+            if ifd1_off != 0 {
+                let ifd1 = t.ifd(ifd1_off);
+                if let (Some(off), Some(len)) = (t.num(Tiff::find(&ifd1, 0x0201)), t.num(Tiff::find(&ifd1, 0x0202))) {
+                    let (start, len) = (base + off as usize, len as usize);
+                    if len > 2 && len < 256 * 1024 && start + 2 <= buf.len() && buf[start] == 0xff && buf[start + 1] == 0xd8 {
+                        out.thumb = Some((start as u64, len as u64));
+                    }
+                }
+            }
+        }
+    }
     out.make = t.text(Tiff::find(&ifd0, 0x010f));
     out.model = t.text(Tiff::find(&ifd0, 0x0110));
     out.orientation = t.num(Tiff::find(&ifd0, 0x0112)).unwrap_or(1) as u16;

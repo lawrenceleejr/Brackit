@@ -15,6 +15,7 @@
     </div>
     <div class="center"><span id="counter"></span></div>
     <div class="right">
+      <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
       <button id="staged-btn" class="link" title="Staged for export (S)">Staged <span id="staged-count" class="num">0</span></button>
       <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
       <button id="help-btn" class="link" title="Shortcuts (?)">?</button>
@@ -69,6 +70,10 @@
       <canvas id="ticks" height="22"></canvas>
     </footer>
   </main>
+
+  <section id="overview" hidden>
+    <div id="ov-grid"></div>
+  </section>
 
   <section id="solo" hidden>
     <div id="solo-frame"></div>
@@ -149,6 +154,7 @@
         <dt>S</dt><dd>staged photos &amp; export</dd>
         <dt>B</dt><dd>brackets only / all photos</dd>
         <dt>U</dt><dd>jump to next unflagged set</dd>
+        <dt>G</dt><dd>overview: thumbnails of every set</dd>
         <dt>O</dt><dd>open another folder</dd>
         <dt>Esc</dt><dd>back</dd>
       </dl>
