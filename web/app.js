@@ -262,7 +262,8 @@ function toggleFlag(pos) {
 function clearSet() {
   const set = S.view[S.idx];
   if (!set) return;
-  const had = set.photos.some((id) => S.flags.delete(photo(id).key));
+  let had = false;
+  for (const id of set.photos) had = S.flags.delete(photo(id).key) || had;
   if (had) {
     saveFlags();
     updateFlagsUi();
