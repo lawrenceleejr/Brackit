@@ -6,7 +6,7 @@ use serde_json::json;
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
-pub fn run() {
+pub fn run(open: Option<String>) {
     let srv = server::App::new("tauri");
     let on_exit = srv.clone();
 
@@ -38,7 +38,10 @@ pub fn run() {
             }));
 
             let port = server::start(srv.clone(), 0)?;
-            let url = format!("http://127.0.0.1:{}/?shell=tauri", port);
+            let mut url = format!("http://127.0.0.1:{}/?shell=tauri", port);
+            if let Some(f) = &open {
+                url.push_str(&format!("&open={}", f));
+            }
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse().unwrap()))
                 .title("Brackit")
                 .inner_size(1600.0, 1000.0)

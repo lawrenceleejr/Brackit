@@ -29,7 +29,7 @@ fn main() {
         serve_mode(&args);
     } else {
         #[cfg(feature = "gui")]
-        gui::run();
+        gui::run(folder_arg(&args).map(|f| encode(&abs(&f))));
     }
 }
 
@@ -40,17 +40,12 @@ fn serve_mode(args: &[String]) {
         .and_then(|i| args.get(i + 1))
         .and_then(|p| p.parse().ok())
         .unwrap_or(4870u16);
-    let folder = args
-        .iter()
-        .enumerate()
-        .find(|(i, a)| !a.starts_with("--") && !(*i > 0 && args[i - 1] == "--port"))
-        .map(|(_, a)| a.clone());
+    let folder = folder_arg(args);
     let app = server::App::new("browser");
     let port = server::start(app.clone(), port).expect("could not start server");
     let mut url = format!("http://127.0.0.1:{}/", port);
     if let Some(f) = folder {
-        let abs = std::fs::canonicalize(&f).unwrap_or_else(|_| f.into());
-        url.push_str(&format!("?open={}", encode(&abs.to_string_lossy())));
+        url.push_str(&format!("?open={}", encode(&abs(&f))));
     }
     println!("\n  brackit  →  {}\n  ctrl-c to quit\n", url);
     if !args.iter().any(|a| a == "--no-open") {
@@ -64,6 +59,18 @@ fn serve_mode(args: &[String]) {
     loop {
         std::thread::park();
     }
+}
+
+/// First positional argument (macOS may pass `-psn_…` when launched by Finder).
+fn folder_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .enumerate()
+        .find(|(i, a)| !a.starts_with('-') && !(*i > 0 && args[i - 1] == "--port"))
+        .map(|(_, a)| a.clone())
+}
+
+fn abs(f: &str) -> String {
+    std::fs::canonicalize(f).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| f.to_string())
 }
 
 fn encode(s: &str) -> String {
