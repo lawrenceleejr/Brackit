@@ -28,8 +28,8 @@
   <main id="welcome" hidden>
     <div class="welcome-inner">
       <h1>Brackit<span class="lite-only lite-tag">Lite</span></h1>
-      <p class="lede">Film-simulation brackets, side by side.<br>Made for the keyboard: every step has a key.</p>
-      <p class="keyline"><kbd>←</kbd><kbd>→</kbd> or <kbd>k</kbd><kbd>j</kbd> flip <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick <kbd>Space</kbd> look closely <kbd>E</kbd> export <kbd>?</kbd> every key</p>
+      <p class="lede">Film-simulation brackets, side by side.<span class="no-touch"><br>Made for the keyboard: every step has a key.</span></p>
+      <p class="keyline"><kbd>←</kbd><kbd>→</kbd> flip <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick <kbd>Space</kbd> look closely <kbd>E</kbd> export <kbd>?</kbd> every key</p>
       <div id="volumes"></div>
       <div class="actions">
         <button id="choose" class="btn">Choose folder… <kbd>O</kbd></button>
@@ -64,7 +64,7 @@
       </div>
       <div class="survey-row">
         <div class="survey-label">
-          Shots per day <span class="muted">— drag, or <kbd>←</kbd><kbd>→</kbd> a day, <kbd>⇧</kbd> to widen</span>
+          Shots per day <span class="muted no-touch">— drag, or <kbd>←</kbd><kbd>→</kbd> a day, <kbd>⇧</kbd> to widen</span><span class="muted touch-only">— drag to choose days</span>
           <span id="survey-quick" class="quick"><button data-q="new" hidden></button><button data-q="all">All <kbd>A</kbd></button><button data-q="last">Last day <kbd>L</kbd></button><button data-q="week">Last 7 days <kbd>W</kbd></button></span>
         </div>
         <svg id="survey-chart" preserveAspectRatio="none"></svg>

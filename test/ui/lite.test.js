@@ -163,6 +163,8 @@ async function pickCard(page) {
   await page.waitForSelector('#survey:not([hidden])');
 }
 
+const shot = (page, name) => process.env.BRACKIT_SHOTS && page.screenshot({ path: path.join(process.env.BRACKIT_SHOTS, name + '.png') });
+
 const FIELDS = ['name', 'rel', 'num', 'size', 'mtime', 'key', 'dateTime', 'subSec', 'filmSim', 'model', 'orientation', 'width', 'height', 'kind', 'hasPreview', 'hasThumb', 'rawName', 'rawSize', 'camRating'];
 const byRel = (lib) => {
   const out = {};
@@ -174,6 +176,7 @@ const setsOf = (lib) => lib.sets.map((s) => ({ kind: s.kind, dateTime: s.dateTim
 test('Lite reads the card exactly as the desktop app does', async () => {
   const { ctx, page, errors } = await openLite();
   assert.equal(await page.evaluate(() => document.body.classList.contains('lite')), true);
+  await shot(page, 'lite-welcome');
   await pickCard(page);
 
   const ref = await desktop('POST', '/api/survey', { path: card });
@@ -283,11 +286,13 @@ test('Lite exports picks to a folder, crops with the camera data kept, and never
 
 test('Lite on a phone: picks files, stacks the looks, tap to pick, swipe to flip', async () => {
   const { ctx, page, errors } = await openLite({ ...devices['iPhone 13'] });
+  await shot(page, 'lite-phone-welcome');
   assert.equal(await page.evaluate(() => document.body.classList.contains('touch')), true);
   const folder = path.join(card, 'DCIM', '101_FUJI');
   await page.tap('#choose');
   await (await page.nextChooser()).setFiles(fs.readdirSync(folder).map((f) => path.join(folder, f)));
   await page.waitForSelector('#survey:not([hidden])');
+  await shot(page, 'lite-phone-survey');
   await page.tap('#survey-open');
   await page.waitForSelector('#viewer:not([hidden])');
   await page.waitForTimeout(800);
@@ -309,7 +314,11 @@ test('Lite on a phone: picks files, stacks the looks, tap to pick, swipe to flip
   assert.equal(await page.evaluate(() => S.idx), 1, 'swipe left = next');
   await swipe(80, 300);
   assert.equal(await page.evaluate(() => S.idx), 0, 'swipe right = back');
-  if (process.env.BRACKIT_SHOTS) await page.screenshot({ path: path.join(process.env.BRACKIT_SHOTS, 'lite-phone.png') });
+  await shot(page, 'lite-phone');
+  await page.tap('#staged-btn');
+  await page.waitForSelector('#staged:not([hidden])');
+  await page.waitForTimeout(500);
+  await shot(page, 'lite-phone-picks');
   assert.deepEqual(errors, []);
   await ctx.close();
 });

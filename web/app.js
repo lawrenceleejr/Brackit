@@ -2542,7 +2542,7 @@ function bindTouch() {
   document.addEventListener(
     'click',
     (e) => {
-      if (performance.now() - swipedAt < 400) {
+      if (performance.now() - swipedAt < 400 && e.target.closest && e.target.closest('#stage, #solo')) {
         e.stopPropagation();
         e.preventDefault();
       }

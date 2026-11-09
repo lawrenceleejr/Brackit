@@ -559,3 +559,8 @@ body.touch .look .frame { cursor: pointer; }
   .survey-head { flex-wrap: wrap; gap: 8px; }
   .survey-label .quick { flex-wrap: wrap; }
 }
+body.touch .no-touch { display: none !important; }
+@media (max-width: 700px) {
+  #staged-close { position: absolute; top: 12px; right: 14px; }
+  .keyline { line-height: 1.5; }
+}
