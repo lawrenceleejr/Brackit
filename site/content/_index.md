@@ -26,10 +26,10 @@ makes a few hundred shots go quickly. Every button in the app shows its key,
 and <kbd>?</kbd> lists them all.
 
 <dl class="keys">
-  <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>next or previous shot</dd>
+  <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>previous or next shot (or <kbd>↑</kbd> <kbd>↓</kbd>, or <kbd>k</kbd> <kbd>j</kbd>)</dd>
   <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>keep that look (<kbd>⌘</kbd> + number to keep more than one)</dd>
   <dt><kbd>Space</kbd></dt><dd>the pick full screen</dd>
-  <dt><kbd>Z</kbd> <kbd>`</kbd> <kbd>H</kbd> <kbd>J</kbd></dt><dd>actual pixels, loupe, histogram, clipping</dd>
+  <dt><kbd>Z</kbd> <kbd>`</kbd> <kbd>H</kbd> <kbd>W</kbd></dt><dd>actual pixels, loupe, histogram, clipping</dd>
   <dt><kbd>C</kbd></dt><dd>straighten and crop</dd>
   <dt><kbd>E</kbd></dt><dd>copy the picks off the card</dd>
   <dt><kbd>⌘</kbd> <kbd>⌫</kbd></dt><dd>delete a shot from the card (with undo)</dd>

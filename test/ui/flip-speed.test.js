@@ -134,11 +134,11 @@ async function openCard({ slow = false, settle = 0 } = {}) {
 
 // After each press: did the screen change, and is every frame filled? In the
 // large view the change is the photo itself (the frame shows the new id).
-async function flip(page, { presses, gapMs, large = false }) {
+async function flip(page, { presses, gapMs, large = false, keys = ['ArrowRight'] }) {
   const screens = [];
   for (let i = 0; i < presses; i++) {
     const before = await page.evaluate(() => [document.querySelector('#counter').textContent, document.querySelector('#solo-frame').dataset.id]);
-    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press(keys[i % keys.length]);
     screens.push(
       await page.evaluate(
         ([before, large]) =>
@@ -239,6 +239,28 @@ test('cropped sets: arrow presses paint within 50 ms', async () => {
   const r = await flip(page, { presses: 25, gapMs: 120 });
   assertFast('cropped', r);
   assert.ok(r.screens.every((s) => s.filled), 'some frame was empty after a press');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// Forward is → ↓ j, back is ← ↑ k, in the 3-up and in the large view alike.
+test('every flip key moves a set, within 50 ms', async () => {
+  const { page, errors } = await openCard({ settle: 1500 });
+  const pos = () => page.evaluate(() => S.idx);
+  for (const large of [false, true]) {
+    if (large) {
+      await page.keyboard.press(' ');
+      await page.waitForTimeout(500);
+    }
+    for (const [key, d] of [['ArrowRight', 1], ['ArrowDown', 1], ['j', 1], ['ArrowLeft', -1], ['ArrowUp', -1], ['k', -1]]) {
+      const before = await pos();
+      await page.keyboard.press(key);
+      assert.equal(await pos(), before + d, `${key} ${large ? 'in the large view ' : ''}should move ${d}`);
+    }
+  }
+  await page.evaluate(() => (window.__keyDurations = []));
+  const r = await flip(page, { presses: 24, gapMs: 120, large: true, keys: ['j', 'ArrowDown', 'k', 'j', 'ArrowUp', 'j'] });
+  assertFast('j / k / ↑ / ↓', r);
   assert.deepEqual(errors, []);
   await page.close();
 });

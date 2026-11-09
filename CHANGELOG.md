@@ -8,6 +8,10 @@
   `[` `]` folders), the crop tool (arrows move, `−` `+` resize, `1`–`6`
   aspect), picks (`R` RAW, `D` folder, `X` clear unpicked looks), the library
   filters (`⇧1`–`5`, `⇧P`, `T`, `[` `]`) and the menu (`M`, `↑` `↓` `Enter`).
+- Flip forward with `→`, `↓` or `j` and back with `←`, `↑` or `k`, wherever
+  you move through photos. Clipping warnings moved from `J` to `W`; in the
+  large view `1` `2` `3` switch looks.
+- The crop tool starts at the photo's original aspect ratio.
 - Buttons show their keys, a reminder of the main keys sits under the photos
   until your first pick, and `?` is now a grouped sheet of every key.
 

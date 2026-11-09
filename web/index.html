@@ -29,7 +29,7 @@
     <div class="welcome-inner">
       <h1>Brackit</h1>
       <p class="lede">Film-simulation brackets, side by side.<br>Made for the keyboard: every step has a key.</p>
-      <p class="keyline"><kbd>←</kbd><kbd>→</kbd> flip <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick <kbd>Space</kbd> look closely <kbd>E</kbd> export <kbd>?</kbd> every key</p>
+      <p class="keyline"><kbd>←</kbd><kbd>→</kbd> or <kbd>k</kbd><kbd>j</kbd> flip <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick <kbd>Space</kbd> look closely <kbd>E</kbd> export <kbd>?</kbd> every key</p>
       <div id="volumes"></div>
       <div class="actions">
         <button id="choose" class="btn">Choose folder… <kbd>O</kbd></button>
@@ -74,7 +74,7 @@
   <main id="viewer" hidden>
     <section id="stage"></section>
     <footer id="index">
-      <div id="index-meta"><span id="set-date"></span><span id="set-files" class="muted"></span><span id="key-hint" hidden><kbd>←</kbd><kbd>→</kbd> flip &nbsp;<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick &nbsp;<kbd>Space</kbd> look closely &nbsp;<kbd>E</kbd> export &nbsp;<kbd>?</kbd> every key</span></div>
+      <div id="index-meta"><span id="set-date"></span><span id="set-files" class="muted"></span><span id="key-hint" hidden><kbd>←</kbd><kbd>→</kbd> or <kbd>k</kbd><kbd>j</kbd> flip &nbsp;<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick &nbsp;<kbd>Space</kbd> look closely &nbsp;<kbd>E</kbd> export &nbsp;<kbd>?</kbd> every key</span></div>
       <canvas id="ticks" height="22"></canvas>
       <div id="peek" hidden><div class="peek-img"></div><div class="peek-cap"></div></div>
     </footer>
@@ -110,8 +110,8 @@
       </div>
       <div class="editor-mid">
       <div id="aspects" class="aspects">
-        <button data-a="free" class="on">Free <kbd>1</kbd></button>
-        <button data-a="orig">Original <kbd>2</kbd></button>
+        <button data-a="free">Free <kbd>1</kbd></button>
+        <button data-a="orig" class="on">Original <kbd>2</kbd></button>
         <button data-a="1">1:1 <kbd>3</kbd></button>
         <button data-a="1.25">4:5 <kbd>4</kbd></button>
         <button data-a="1.7778">16:9 <kbd>5</kbd></button>
@@ -158,8 +158,8 @@
       <div class="help-cols">
         <dl>
           <dt class="group">Flip and pick</dt><dd></dd>
-          <dt>← →</dt><dd>previous / next set</dd>
-          <dt>⇧ ← →</dt><dd>jump ten sets</dd>
+          <dt>← →  ↑ ↓  k j</dt><dd>previous / next set</dd>
+          <dt>⇧ + those</dt><dd>jump ten sets</dd>
           <dt>Home End</dt><dd>first / last set</dd>
           <dt>1 2 3</dt><dd>pick that look</dd>
           <dt>⌘ 1 2 3</dt><dd>add / remove a look (keep several)</dd>
@@ -169,11 +169,11 @@
           <dt>G</dt><dd>overview of every set (arrows, ↵)</dd>
           <dt class="group">Look closely</dt><dd></dd>
           <dt>Space</dt><dd>the pick full screen; again to go back</dd>
-          <dt>↑ ↓  1 2 3</dt><dd>switch looks there</dd>
+          <dt>1 2 3</dt><dd>switch looks there</dd>
           <dt>Z</dt><dd>actual pixels</dd>
           <dt>`</dt><dd>loupe (scroll to zoom)</dd>
           <dt>H</dt><dd>histogram</dd>
-          <dt>J</dt><dd>clipping: red blown, blue crushed</dd>
+          <dt>W</dt><dd>clipping warnings: red blown, blue crushed</dd>
           <dt>A</dt><dd>focus point and faces</dd>
           <dt>I</dt><dd>camera settings, recipe, all metadata</dd>
           <dt>C</dt><dd>straighten and crop</dd>
@@ -183,7 +183,7 @@
           <dt>[ ]</dt><dd>straighten 0.1° (⇧ 1°)</dd>
           <dt>arrows</dt><dd>move the crop (⇧ further)</dd>
           <dt>− +</dt><dd>smaller / larger crop</dd>
-          <dt>1 – 6</dt><dd>free, original, 1:1, 4:5, 16:9, 2.39:1</dd>
+          <dt>1 – 6</dt><dd>free, original (the default), 1:1, 4:5, 16:9, 2.39:1</dd>
           <dt>↵ / Esc</dt><dd>done / cancel</dd>
           <dt class="group">Export and card</dt><dd></dd>
           <dt>S</dt><dd>your picks (there: R RAW, D folder)</dd>

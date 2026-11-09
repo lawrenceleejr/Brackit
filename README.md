@@ -25,7 +25,7 @@ probably useful to you as well.
 
 ## What it does
 
-- **Keyboard first.** Arrows to flip, `1` `2` `3` to pick, `Space` to look
+- **Keyboard first.** Arrows (or `j` / `k`) to flip, `1` `2` `3` to pick, `Space` to look
   closely, `E` to export. The start screen, the date chooser, the crop tool,
   the picks, the library and the menu all work from the keys too.
 - **Brackets side by side.** Each shutter press is one set of three looks, in
@@ -38,7 +38,7 @@ probably useful to you as well.
   more than one). `E` copies everything you picked to a folder, untouched.
   Optionally the RAW (`.RAF`) too.
 - **Look closely.** `Space` shows a look full screen. There's a loupe (`` ` ``),
-  actual pixels (`Z`), a histogram (`H`), clipping warnings (`J`), the focus
+  actual pixels (`Z`), a histogram (`H`), clipping warnings (`W`), the focus
   point and detected faces as the camera recorded them (`A`), and the camera
   settings and film recipe (`I`), with every tag the camera wrote one click
   away.
@@ -85,7 +85,7 @@ standalone `brackit-cli-…` binaries for each system on the releases page.
 2. **Choose what to look at.** Brackit shows the card's folders and a chart of
    how many shots you took each day. If you've imported from this card
    before, *New since last import* is already selected, so just press `Enter`.
-3. **Flip with ← →** and **pick with 1, 2 or 3.** Your pick gets an orange
+3. **Flip with ← →** (or ↑ ↓, or j k) and **pick with 1, 2 or 3.** Your pick gets an orange
    outline.
 4. **Press `Space`** to see your pick full screen at full resolution;
    `1` `2` `3` switch looks there.
@@ -100,17 +100,17 @@ can eject the card and carry on later.
 
 | Key | |
 |---|---|
-| `←` `→` | previous / next set (`Shift` jumps 10) |
+| `←` `→`, `↑` `↓` or `k` `j` | previous / next set (`Shift` jumps 10) |
 | `1` `2` `3` | pick that look; `⌘`/`Ctrl` + number adds or removes a look |
 | `0` | unpick this set |
-| `Space` | inspect the pick full screen; `↑` `↓` or `1` `2` `3` switch looks |
+| `Space` | inspect the pick full screen; `1` `2` `3` switch looks |
 | `Z` | actual pixels |
 | `` ` `` | loupe (scroll to zoom) |
 | `H` | histogram |
-| `J` | clipping: red = blown highlights, blue = crushed shadows |
+| `W` | clipping warnings: red = blown highlights, blue = crushed shadows |
 | `A` | annotations: focus point and faces |
 | `I` | camera settings, film recipe, all metadata |
-| `C` | straighten and crop: `[` `]` straighten, arrows move, `−` `+` resize, `1`–`6` aspect, `Enter` done |
+| `C` | straighten and crop: `[` `]` straighten, arrows move, `−` `+` resize, `1`–`6` aspect (original by default), `Enter` done |
 | `G` | overview of every set |
 | `S` / `E` | show picks / export picks; in picks `R` adds RAW, `D` changes the folder, `X` clears unpicked looks after export |
 | `L` | library of the export folder; there `0`–`5` stars, `P` flag, `⇧1`–`5` / `⇧P` / `T` / `[` `]` filter |

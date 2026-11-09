@@ -527,8 +527,13 @@ function libraryKey(e, k) {
       if (p) toggleFlagOut(p);
       return true;
     case 'ArrowRight':
-    case 'ArrowLeft': {
-      const d = k === 'ArrowRight' ? 1 : -1;
+    case 'ArrowLeft':
+    case 'j':
+    case 'J':
+    case 'k':
+    case 'K': {
+      if (e.shiftKey && (k === 'J' || k === 'K')) return false;
+      const d = k === 'ArrowRight' || k === 'j' || k === 'J' ? 1 : -1;
       if (LIB.view) {
         const n = clamp(LIB.view.i + d, 0, LIB.items.length - 1);
         if (n !== LIB.view.i && LIB.items[n].kind !== 'video') {
@@ -539,9 +544,19 @@ function libraryKey(e, k) {
       return true;
     }
     case 'ArrowDown':
-    case 'ArrowUp':
-      if (!LIB.view) libVertical(k === 'ArrowDown' ? 1 : -1);
+    case 'ArrowUp': {
+      // the grid moves by rows; one photo at a time flips like ← →
+      const d = k === 'ArrowDown' ? 1 : -1;
+      if (!LIB.view) libVertical(d);
+      else {
+        const n = clamp(LIB.view.i + d, 0, LIB.items.length - 1);
+        if (n !== LIB.view.i && LIB.items[n].kind !== 'video') {
+          LIB.view.i = n;
+          renderLibView();
+        }
+      }
       return true;
+    }
     case ' ':
     case 'Enter':
       LIB.view ? closeLibView() : openLibView(LIB.cursor);

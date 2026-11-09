@@ -1,7 +1,7 @@
 'use strict';
 /* Inspection tools, layered over whatever photo is on screen:
      `  loupe (Aperture-style magnifier following the cursor)
-     J  clipping overlay: red hatching = blown highlights, blue = crushed shadows
+     W  clipping overlay: red hatching = blown highlights, blue = crushed shadows
      A  annotations: the camera's focus point and detected faces
    Photos opt in by carrying data-photo (an id) and data-src ('card' | 'out')
    on their frame element. Shares helpers and state (S, api, el, …) with app.js. */

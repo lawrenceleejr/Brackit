@@ -1938,7 +1938,7 @@ function openEditor(pos) {
     img: null,
     angle: existing.angle,
     crop: { ...existing.crop },
-    aspect: existing.aspect || 'free',
+    aspect: (editOf(p) && existing.aspect) || 'orig',
   };
   $('#editor').hidden = false;
   $('#angle').value = existing.angle;
@@ -2732,7 +2732,7 @@ function bindUi() {
     S.editor.angle = 0;
     S.editor.crop = { ...IDENTITY.crop };
     $('#angle').value = 0;
-    setAspect('free');
+    setAspect('orig');
   };
   $('#edit-cancel').onclick = () => closeEditor(false);
   $('#edit-done').onclick = () => closeEditor(true);
@@ -2778,7 +2778,7 @@ function bindUi() {
       if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
     }
     if (t && t.tagName === 'BUTTON' && !t.dataset.mouse && (e.key === ' ' || e.key === 'Enter')) return;
-    if (e.repeat && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) S.flipping = true;
+    if (e.repeat && FLIP_KEYS[e.key]) S.flipping = true;
     onKey(e);
   });
   // remember which buttons got focus from the mouse (vs. Tab)
@@ -2931,7 +2931,7 @@ const MENU = [
     { id: 'info', label: 'Camera settings & recipe', key: 'I', press: { key: 'i' }, when: isPhotoSet, on: () => S.showInfo },
     { id: 'histogram', label: 'Histogram', key: 'H', press: { key: 'h' }, when: inViewer, on: () => S.showHist },
     { id: 'loupe', label: 'Loupe', key: '`', press: { key: '`', code: 'Backquote' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.loupe },
-    { id: 'clipping', label: 'Clipping (blown / crushed)', key: 'J', press: { key: 'j' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.clip },
+    { id: 'clipping', label: 'Clipping (blown / crushed)', key: 'W', press: { key: 'w' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.clip },
     { id: 'annotations', label: 'Annotations (focus, faces)', key: 'A', press: { key: 'a' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.notes },
     { id: 'brackets', label: 'Brackets only', key: 'B', press: { key: 'b' }, when: inViewer, on: () => S.bracketsOnly },
   ]],
@@ -3024,6 +3024,9 @@ function closeMenu() {
   $('#menu').hidden = true;
 }
 
+// Forward and back through the sets: → ↓ j and ← ↑ k (and . ,), all the same.
+const FLIP_KEYS = { ArrowRight: 1, ArrowDown: 1, j: 1, J: 1, '.': 1, ArrowLeft: -1, ArrowUp: -1, k: -1, K: -1, ',': -1 };
+
 function onKey(e) {
   if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;
   // ⌘/Ctrl/Shift + digit = add to a multi-pick (browsers reserve ⌘1-9 for
@@ -3077,7 +3080,7 @@ function onKey(e) {
       toggleLoupe();
       return e.preventDefault();
     }
-    if (k === 'j' || k === 'J') {
+    if ((k === 'w' || k === 'W') && $('#survey').hidden) {
       toggleClipping();
       return e.preventDefault();
     }
@@ -3106,8 +3109,8 @@ function onKey(e) {
   }
 
   if (!$('#overview').hidden) {
-    if (k === 'ArrowRight') moveOverviewCursor(OV.cursor + 1);
-    else if (k === 'ArrowLeft') moveOverviewCursor(OV.cursor - 1);
+    if (k === 'ArrowRight' || k === 'j' || k === 'J') moveOverviewCursor(OV.cursor + 1);
+    else if (k === 'ArrowLeft' || k === 'k' || k === 'K') moveOverviewCursor(OV.cursor - 1);
     else if (k === 'ArrowDown') overviewVertical(1);
     else if (k === 'ArrowUp') overviewVertical(-1);
     else if (k === 'Home') moveOverviewCursor(0);
@@ -3170,15 +3173,11 @@ function onKey(e) {
   }
 
   const set = S.view[S.idx];
+  if (FLIP_KEYS[k]) {
+    go(FLIP_KEYS[k] * (e.shiftKey ? 10 : 1));
+    return e.preventDefault();
+  }
   switch (k) {
-    case 'ArrowRight':
-    case '.':
-      go(e.shiftKey ? 10 : 1);
-      break;
-    case 'ArrowLeft':
-    case ',':
-      go(e.shiftKey ? -10 : -1);
-      break;
     case 'Home':
       S.idx = 0;
       render();
@@ -3212,15 +3211,6 @@ function onKey(e) {
     }
     case '0':
       clearSet();
-      break;
-    case 'ArrowUp':
-    case 'ArrowDown':
-      if (S.solo && set) {
-        const n = set.photos.length;
-        S.solo.pos = (S.solo.pos + (k === 'ArrowDown' ? 1 : -1) + n) % n;
-        S.solo.zoom = S.solo.zoom || false;
-        renderSolo();
-      } else return;
       break;
     case ' ': {
       const v = videoEl();

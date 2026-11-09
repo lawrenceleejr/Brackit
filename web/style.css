@@ -506,13 +506,13 @@ body.fs #key-hint { display: none; }
 .help-inner h2 { margin-bottom: 6px; }
 .help-lede { color: var(--muted); margin: 0 0 22px; font-size: 13px; }
 .help-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
-.help-inner dl { grid-template-columns: 96px auto; gap: 6px 18px; align-content: start; }
+.help-inner dl { grid-template-columns: 116px auto; gap: 6px 18px; align-content: start; }
 .help-inner dt.group { grid-column: 1 / -1; text-align: left; color: var(--muted); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; margin-top: 14px; padding-bottom: 2px; border-bottom: 1px solid var(--hair); }
 .help-inner dt.group:first-child { margin-top: 0; }
 .help-inner dt.group + dd { display: none; }
 @media (max-width: 760px) { .help-cols { grid-template-columns: 1fr; } }
 @media (max-height: 700px) and (min-width: 860px) {
-  .help-inner dl { grid-template-columns: 96px auto; }
+  .help-inner dl { grid-template-columns: 116px auto; }
 }
 .lib-keys { margin-left: auto; color: var(--tick); white-space: pre; align-self: center; }
 .lib-keys kbd { color: var(--muted); border-color: var(--hair); }

@@ -105,7 +105,7 @@ fn build_menu<R: tauri::Runtime>(h: &tauri::AppHandle<R>) -> tauri::Result<tauri
                     &item("info", "Camera Settings & Recipe   I")?,
                     &item("histogram", "Histogram   H")?,
                     &item("loupe", "Loupe   `")?,
-                    &item("clipping", "Clipping (Blown / Crushed)   J")?,
+                    &item("clipping", "Clipping (Blown / Crushed)   W")?,
                     &item("annotations", "Annotations (Focus, Faces)   A")?,
                     &item("brackets", "Brackets Only   B")?,
                     &P::separator(h)?,
