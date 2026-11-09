@@ -591,10 +591,7 @@ function pump() {
         () => {
           e.done = true;
           e.resolve(e.img);
-          if (e.kind === 'preview' && !dispScheduled && dispQueue.length) {
-            dispScheduled = true;
-            (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
-          }
+          if (e.kind === 'preview' && dispQueue.length) scheduleDisplayCopy();
         },
         (err) => {
           if (err && err.name === 'AbortError') return; // re-requested later if needed
@@ -798,14 +795,20 @@ function queueDisplayCopies() {
     const set = S.view[S.idx + d];
     if (set && set.kind !== 'video') for (const id of set.photos) if (!editOf(photo(id))) dispQueue.push({ id, set });
   }
-  if (!dispScheduled) {
-    dispScheduled = true;
-    (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
-  }
+  scheduleDisplayCopy();
+}
+
+function scheduleDisplayCopy(delay = 0) {
+  if (dispScheduled) return;
+  dispScheduled = true;
+  const go = () => (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
+  delay ? setTimeout(go, delay) : go();
 }
 
 function makeDisplayCopy() {
   dispScheduled = false;
+  // never compete with flipping: wait for a quiet moment after the last key
+  if (S.flipping || performance.now() - (S.lastKeyAt || 0) < 300) return scheduleDisplayCopy(300);
   while (dispQueue.length) {
     const { id, set } = dispQueue.shift();
     const url = previewUrl(id);
@@ -813,21 +816,40 @@ function makeDisplayCopy() {
     if (!e || !e.done || !e.img.naturalWidth || displayCopy(url, set)) continue;
     const { imgMax, lookW, a } = layoutFor(set);
     const w = Math.min(lookW, imgMax * a);
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(w * dpr()));
-    c.height = Math.max(1, Math.round((w / a) * dpr()));
-    const ctx = c.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(e.img, 0, 0, c.width, c.height);
-    c.className = 'ready';
-    DISP.set(url, { canvas: c, key: dispKey(set) });
-    while (DISP.size > DISP_MAX) DISP.delete(DISP.keys().next().value);
-    break; // one per idle slot, so a keypress never waits behind this
+    const cw = Math.max(1, Math.round(w * dpr()));
+    const ch = Math.max(1, Math.round((w / a) * dpr()));
+    const key = dispKey(set);
+    const store = (c) => {
+      c.className = 'ready';
+      DISP.set(url, { canvas: c, key });
+      while (DISP.size > DISP_MAX) DISP.delete(DISP.keys().next().value);
+      if (dispQueue.length) scheduleDisplayCopy();
+    };
+    // Resize off the main thread where the browser can; fall back to drawing.
+    if (window.createImageBitmap) {
+      createImageBitmap(e.img, { resizeWidth: cw, resizeHeight: ch, resizeQuality: 'high' })
+        .then((bmp) => {
+          const c = document.createElement('canvas');
+          c.width = cw;
+          c.height = ch;
+          c.getContext('2d').drawImage(bmp, 0, 0, cw, ch);
+          bmp.close && bmp.close();
+          store(c);
+        })
+        .catch(() => store(drawCopy(e.img, cw, ch)));
+    } else store(drawCopy(e.img, cw, ch));
+    return; // one at a time, so a keypress never waits behind this
   }
-  if (dispQueue.length) {
-    dispScheduled = true;
-    (window.requestIdleCallback || ((f) => setTimeout(f, 16)))(makeDisplayCopy);
-  }
+}
+
+function drawCopy(img, cw, ch) {
+  const c = document.createElement('canvas');
+  c.width = cw;
+  c.height = ch;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, cw, ch);
+  return c;
 }
 
 // Re-rank the preview queue around the current set; cancel what's no longer
@@ -843,11 +865,6 @@ function preloadAround() {
   const ahead = S.flipping ? 0 : AHEAD;
   for (let d = 1; d <= ahead; d++) add(S.view[S.idx + d], d);
   if (!S.flipping) add(S.view[S.idx - 1], 1.5);
-  // inspecting: the same look in the next set at full resolution, ready to go
-  if (S.solo && !S.flipping) {
-    const next = S.view[S.idx + 1];
-    if (next && next.kind !== 'video') want.set(fullUrl(next.photos[Math.min(S.solo.pos, next.photos.length - 1)]), 1.2);
-  }
   for (const [url, e] of [...imageCache]) {
     if (e.done) continue;
     if (want.has(url)) {
@@ -1069,8 +1086,8 @@ let renderToken = 0;
 function render() {
   const token = ++renderToken;
   const stage = $('#stage');
-  stage.innerHTML = '';
   const set = S.view[S.idx];
+  if (!set || !S.solo) stage.innerHTML = '';
   if (!set) {
     stage.append(el('div', 'empty', S.lib && S.lib.sets.length ? 'No brackets here — press B to show all photos.' : 'No JPEGs or videos found in this folder.'));
     $('#counter').textContent = '';
@@ -1087,6 +1104,15 @@ function render() {
   const names = set.photos.map((id) => photo(id).name);
   $('#set-files').textContent = names.length > 1 ? `${names[0]} – ${names[names.length - 1]}` : names[0];
 
+  if (S.solo) {
+    // the large view covers the 3-up: skip building it until the view closes
+    S.stageStale = true;
+    drawTicks();
+    renderSolo();
+    return;
+  }
+  S.stageStale = false;
+  stage.innerHTML = '';
   layoutStage(stage, set);
   set.photos.forEach((id, pos) => {
     const p = photo(id);
@@ -1187,7 +1213,13 @@ function layoutStage(stage, set) {
 
 function go(delta) {
   if (!S.view.length) return;
-  const next = clamp(S.idx + delta, 0, S.view.length - 1);
+  let next = clamp(S.idx + delta, 0, S.view.length - 1);
+  if (S.solo) {
+    // the large view shows photos: step over video sets instead of closing
+    const dir = Math.sign(delta) || 1;
+    while (S.view[next] && S.view[next].kind === 'video' && next + dir >= 0 && next + dir < S.view.length) next += dir;
+    if (S.view[next].kind === 'video') return;
+  }
   if (next === S.idx) return;
   S.idx = next;
   if (S.solo) {
@@ -1196,7 +1228,11 @@ function go(delta) {
     // follow the pick in the new set, otherwise keep looking at the same slot
     S.solo.pos = selectedPos(set) ?? Math.min(S.solo.pos, set.photos.length - 1);
   }
-  scheduleRender();
+  S.lastKeyAt = performance.now();
+  // a single press renders right now (no waiting for the next frame); held-key
+  // repeats are coalesced to one render per frame
+  if (!S.flipping && !renderPending) render();
+  else scheduleRender();
 }
 
 // Key repeat can outpace the screen: draw at most once per frame, always
@@ -1477,6 +1513,8 @@ function openSolo(pos, opts = {}) {
 }
 
 function closeSolo() {
+  clearTimeout(fullTimer);
+  if (S.stageStale) requestAnimationFrame(() => !S.solo && render());
   $('#solo-info').hidden = true;
   const sh = $('#solo-hist');
   if (sh) sh.remove();
@@ -1489,6 +1527,13 @@ function closeSolo() {
 }
 
 let soloToken = 0;
+/* The large view must flip as fast as the 3-up: show the preview at once
+   (or the header thumbnail, scaled to fit), and only fetch and decode the
+   40 MP original once you pause on a photo — a third of a second without
+   another key. Full-size downloads for photos you've moved past are cancelled. */
+const FULL_DWELL_MS = 350;
+let fullTimer = 0;
+
 function renderSolo() {
   const token = ++soloToken;
   const set = S.view[S.idx];
@@ -1500,37 +1545,79 @@ function renderSolo() {
   solo.classList.toggle('zoom', !!S.solo.zoom);
   renderSoloCaption();
   renderInfo();
-  const show = (node) => {
+  clearTimeout(fullTimer);
+  for (const [url, e] of [...imageCache]) {
+    if (e.kind === 'full' && !e.done && url !== fullUrl(id)) {
+      drop(e);
+      imageCache.delete(url);
+    }
+  }
+  const show = (node, level) => {
     if (token !== soloToken) return;
-    node.style.width = '';
-    node.style.transform = '';
-    frame.innerHTML = '';
-    frame.append(node);
+    frame.dataset.id = id;
+    frame.dataset.level = level;
+    if (level !== 'thumb') {
+      node.style.width = '';
+      node.style.height = '';
+      node.style.transform = '';
+    }
+    frame.replaceChildren(node);
     const old = $('#solo-hist');
     if (old) old.remove();
-    if (S.showHist) {
+    if (S.showHist && level !== 'thumb') {
       const h = histCanvas(node, 220, 64, '');
       h.id = 'solo-hist';
-      $('#solo').append(h);
+      solo.append(h);
     }
-    if (S.solo.zoom) zoomTo(S.solo.zx ?? 0.5, S.solo.zy ?? 0.5);
+    if (S.solo.zoom && level === 'full') zoomTo(S.solo.zx ?? 0.5, S.solo.zy ?? 0.5);
   };
   const edit = editOf(p);
-  // preview first (instant), then swap in the full-resolution file
-  const pre = getImage(previewUrl(id));
-  pre.promise.then((img) => {
-    if (token !== soloToken) return;
-    if (!frame.firstChild || frame.dataset.id !== id) {
-      frame.dataset.id = id;
-      show(edit ? renderEdited(img, edit, frame.clientWidth * dpr()) : img.cloneNode());
-    }
-  });
-  // full resolution jumps the queue ahead of every prefetch
-  getImage(fullUrl(id), -1).promise.then((full) => {
-    if (token !== soloToken || !full.naturalWidth) return;
-    frame.dataset.id = id;
-    show(edit ? renderEdited(full, edit) : full);
-  });
+  const sharper = (level) => frame.dataset.id === id && (frame.dataset.level === 'full' || (level === 'thumb' && frame.dataset.level === 'preview'));
+
+  // 1. something on screen in this frame: the preview if ready, else the thumbnail
+  const pre = getImage(previewUrl(id), 0);
+  const showPreview = (img) => {
+    if (token !== soloToken || !img || !img.naturalWidth || sharper('preview')) return;
+    // the decoded preview element itself (a copy could be decoded again)
+    show(edit ? renderEdited(img, edit, frame.clientWidth * dpr()) : img, 'preview');
+  };
+  if (pre.done) showPreview(pre.img);
+  else {
+    const showThumb = (timg) => {
+      if (token !== soloToken || !timg || !timg.naturalWidth || sharper('thumb')) return;
+      let node;
+      if (edit) node = placeholder(timg, p, edit);
+      else {
+        const a = photoAspect(p);
+        const w = Math.min(frame.clientWidth, frame.clientHeight * a);
+        node = timg.cloneNode();
+        node.style.width = `${Math.round(w)}px`;
+        node.style.height = `${Math.round(w / a)}px`;
+        node.style.objectFit = 'cover';
+      }
+      node.classList.add('lowres');
+      show(node, 'thumb');
+    };
+    const ready = thumbReady(id);
+    if (ready) showThumb(ready);
+    else thumbImage(id).then(showThumb);
+    pre.promise.then(showPreview);
+  }
+
+  // 2. full resolution once you pause here (right away when zoomed in)
+  fullTimer = setTimeout(
+    () => {
+      if (token !== soloToken) return;
+      getImage(fullUrl(id), -1).promise.then((full) => {
+        if (token !== soloToken || !full.naturalWidth) return;
+        show(edit ? renderEdited(full, edit) : full, 'full');
+      });
+      // and the same look in the next set, so stepping on is sharp too
+      const next = S.view[S.idx + 1];
+      if (next && next.kind !== 'video') getImage(fullUrl(next.photos[Math.min(S.solo.pos, next.photos.length - 1)]), 3);
+    },
+    S.solo.zoom ? 0 : FULL_DWELL_MS
+  );
 }
 
 /* I: camera settings and the film recipe of the look on screen, as a small
@@ -1623,6 +1710,13 @@ function zoomTo(fx, fy) {
 function toggleZoom(e) {
   if (!S.solo) return;
   S.solo.zoom = !S.solo.zoom;
+  if (S.solo.zoom && $('#solo-frame').dataset.level !== 'full') {
+    // actual pixels needs the original: fetch it now rather than after the pause
+    const r = $('#solo-frame').getBoundingClientRect();
+    S.solo.zx = e ? clamp((e.clientX - r.left) / r.width, 0, 1) : 0.5;
+    S.solo.zy = e ? clamp((e.clientY - r.top) / r.height, 0, 1) : 0.5;
+    return renderSolo();
+  }
   $('#solo').classList.toggle('zoom', S.solo.zoom);
   const node = soloNode();
   if (!node) return;

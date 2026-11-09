@@ -132,24 +132,30 @@ async function openCard({ slow = false, settle = 0 } = {}) {
   return { page, errors };
 }
 
-// After each press: did the screen change (counter) and is every frame filled?
-async function flip(page, { presses, gapMs }) {
+// After each press: did the screen change, and is every frame filled? In the
+// large view the change is the photo itself (the frame shows the new id).
+async function flip(page, { presses, gapMs, large = false }) {
   const screens = [];
   for (let i = 0; i < presses; i++) {
-    const before = await page.textContent('#counter');
+    const before = await page.evaluate(() => [document.querySelector('#counter').textContent, document.querySelector('#solo-frame').dataset.id]);
     await page.keyboard.press('ArrowRight');
     screens.push(
       await page.evaluate(
-        (before) =>
+        ([before, large]) =>
           new Promise((res) =>
-            requestAnimationFrame(() =>
-              res({
-                changed: document.querySelector('#counter').textContent !== before,
-                filled: [...document.querySelectorAll('#stage .frame')].every((f) => f.firstElementChild),
-              })
-            )
+            requestAnimationFrame(() => {
+              const sf = document.querySelector('#solo-frame');
+              res(
+                large
+                  ? { changed: sf.dataset.id !== before[1], filled: !!sf.firstElementChild }
+                  : {
+                      changed: document.querySelector('#counter').textContent !== before[0],
+                      filled: [...document.querySelectorAll('#stage .frame')].every((f) => f.firstElementChild),
+                    }
+              );
+            })
           ),
-        before
+        [before, large]
       )
     );
     if (gapMs) await page.waitForTimeout(gapMs);
@@ -194,6 +200,29 @@ test('holding the arrow key: every repeat paints within 50 ms', async () => {
   const { page, errors } = await openCard({ slow: true, settle: 1500 });
   const r = await flip(page, { presses: 40, gapMs: 0 });
   assertFast('held key', r);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('large view (space): arrow presses paint within 50 ms, warm card', async () => {
+  const { page, errors } = await openCard({ settle: 2500 });
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(800);
+  await page.evaluate(() => (window.__keyDurations = []));
+  const r = await flip(page, { presses: 25, gapMs: 120, large: true });
+  assertFast('large view, warm', r);
+  assert.ok(r.screens.every((s) => s.filled), 'the large view was empty after a press');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('large view (space): arrow presses paint within 50 ms, cold slow card, quick presses', async () => {
+  const { page, errors } = await openCard({ slow: true });
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => (window.__keyDurations = []));
+  const r = await flip(page, { presses: 30, gapMs: 30, large: true });
+  assertFast('large view, cold + slow card', r);
   assert.deepEqual(errors, []);
   await page.close();
 });
