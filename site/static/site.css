@@ -49,3 +49,16 @@ a:hover { color: var(--accent); text-decoration-color: var(--accent); }
 }
 .get { margin: 22px 0 0; color: var(--muted); font-size: 15px; }
 .get a:first-child { color: var(--accent); text-decoration-color: rgba(240,166,64,.4); }
+.sub { margin: 14px 0 0; color: var(--muted); font-size: 18px; line-height: 1.5; max-width: 34rem; }
+
+/* keys, drawn like the app draws them */
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 0 5px; text-align: center;
+  font: 13px/20px var(--font); color: var(--ink);
+  border: 1px solid var(--faint); border-bottom-width: 2px; border-radius: 4px;
+}
+.keys { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 24px 0 8px; align-items: baseline; }
+.keys dt { white-space: nowrap; }
+.keys dd { margin: 0; color: #d5d1c9; }
+.keys dd kbd { font-size: 12px; line-height: 18px; }
+@media (max-width: 560px) { .keys { grid-template-columns: 1fr; gap: 2px; } .keys dd { margin-bottom: 8px; } }

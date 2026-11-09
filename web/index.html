@@ -15,26 +15,33 @@
     </div>
     <div class="center"><span id="counter"></span></div>
     <div class="right">
-      <button id="eject-btn" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
-      <button id="lib-btn" class="link" title="Library of the export folder (L)">Library</button>
-      <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
-      <button id="staged-btn" class="link" title="Your picks (S); E exports them">Picks <span id="staged-count" class="num">0</span></button>
-      <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
-      <button id="menu-btn" class="link" title="All tools">Menu</button>
-      <button id="help-btn" class="link" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      <button id="eject-btn" class="link full-only" title="Eject the card (⌘E)" hidden>⏏ Eject <kbd>⌘E</kbd></button>
+      <button id="lib-btn" class="link full-only" title="Library of the export folder (L)">Library <kbd>L</kbd></button>
+      <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview <kbd>G</kbd></button>
+      <button id="staged-btn" class="link" title="Your picks (S); E exports them">Picks <span id="staged-count" class="num">0</span> <kbd>S</kbd></button>
+      <button id="fs-btn" class="link" title="Full screen (F)">Full screen <kbd>F</kbd></button>
+      <button id="menu-btn" class="link" title="All tools (M)">Menu <kbd>M</kbd></button>
+      <button id="help-btn" class="link" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">Keys <kbd>?</kbd></button>
     </div>
   </header>
 
   <main id="welcome" hidden>
     <div class="welcome-inner">
-      <h1>Brackit</h1>
-      <p class="lede">Film-simulation brackets, side by side.</p>
+      <h1>Brackit<span class="lite-only lite-tag">Lite</span></h1>
+      <p class="lede">Film-simulation brackets, side by side.<span class="no-touch"><br>Made for the keyboard: every step has a key.</span></p>
+      <p class="keyline"><kbd>←</kbd><kbd>→</kbd> flip <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick <kbd>Space</kbd> look closely <kbd>E</kbd> export <kbd>?</kbd> every key</p>
       <div id="volumes"></div>
       <div class="actions">
-        <button id="choose" class="btn">Choose folder…</button>
+        <button id="choose" class="btn">Choose folder… <kbd>O</kbd></button>
+        <button id="lite-files" class="btn quiet lite-only">Choose photos… <kbd>P</kbd></button>
       </div>
-      <form id="path-form" class="path-form">
-        <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Volumes/Untitled">
+      <div class="lite-only lite-note">
+        <p class="touch-only">Put the card in a card reader, tap <b>Choose photos</b>, then <b>Browse</b>, your card, <b>Select</b> and <b>Select All</b>.</p>
+        <p>The photos stay on this device. Nothing is uploaded.</p>
+        <p class="muted">Brackit Lite picks and exports. Deleting from the card, ejecting it and the Library of your export folder are in the <a href="https://lawrenceleejr.github.io/Brackit/#download">desktop app</a>.</p>
+      </div>
+      <form id="path-form" class="path-form full-only">
+        <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Volumes/Untitled  (press / to type a path)">
         <button class="btn quiet" type="submit">Open</button>
       </form>
       <div id="scan-status" class="muted"></div>
@@ -47,7 +54,7 @@
         <h1 id="survey-name"></h1>
         <span class="survey-head-actions">
           <button id="survey-return" class="link" title="Back to the photos you had open (Esc)" hidden>Back to photos</button>
-          <button id="survey-eject" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
+          <button id="survey-eject" class="link full-only" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
           <button id="survey-back" class="link">Other card</button>
         </span>
       </div>
@@ -57,15 +64,15 @@
       </div>
       <div class="survey-row">
         <div class="survey-label">
-          Shots per day <span class="muted">— drag to choose a range</span>
-          <span id="survey-quick" class="quick"><button data-q="new" hidden></button><button data-q="all">All</button><button data-q="last">Last day</button><button data-q="week">Last 7 days</button></span>
+          Shots per day <span class="muted no-touch">— drag, or <kbd>←</kbd><kbd>→</kbd> a day, <kbd>⇧</kbd> to widen</span><span class="muted touch-only">— drag to choose days</span>
+          <span id="survey-quick" class="quick"><button data-q="new" hidden></button><button data-q="all">All <kbd>A</kbd></button><button data-q="last">Last day <kbd>L</kbd></button><button data-q="week">Last 7 days <kbd>W</kbd></button></span>
         </div>
         <svg id="survey-chart" preserveAspectRatio="none"></svg>
       </div>
       <div class="survey-foot">
         <span id="survey-sel"></span>
         <span id="survey-status" class="muted"></span>
-        <button id="survey-open" class="btn primary">Open</button>
+        <button id="survey-open" class="btn primary">Open</button><kbd class="after">↵</kbd>
       </div>
     </div>
   </main>
@@ -73,7 +80,7 @@
   <main id="viewer" hidden>
     <section id="stage"></section>
     <footer id="index">
-      <div id="index-meta"><span id="set-date"></span><span id="set-files" class="muted"></span></div>
+      <div id="index-meta"><span id="set-date"></span><span id="set-files" class="muted"></span><span id="key-hint" hidden><kbd>←</kbd><kbd>→</kbd> or <kbd>k</kbd><kbd>j</kbd> flip &nbsp;<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick &nbsp;<kbd>Space</kbd> look closely &nbsp;<kbd>E</kbd> export &nbsp;<kbd>?</kbd> every key</span></div>
       <canvas id="ticks" height="22"></canvas>
       <div id="peek" hidden><div class="peek-img"></div><div class="peek-cap"></div></div>
     </footer>
@@ -103,22 +110,25 @@
     </div>
     <div id="editor-controls">
       <div class="straighten">
-        <span class="label muted">Straighten</span>
+        <span class="label muted">Straighten <kbd>[</kbd><kbd>]</kbd></span>
         <input id="angle" type="range" min="-15" max="15" step="0.05" value="0">
         <span id="angle-val" class="num">0.0°</span>
       </div>
+      <div class="editor-mid">
       <div id="aspects" class="aspects">
-        <button data-a="free" class="on">Free</button>
-        <button data-a="orig">Original</button>
-        <button data-a="1">1:1</button>
-        <button data-a="1.25">4:5</button>
-        <button data-a="1.7778">16:9</button>
-        <button data-a="2.39">2.39:1</button>
+        <button data-a="free">Free <kbd>1</kbd></button>
+        <button data-a="orig" class="on">Original <kbd>2</kbd></button>
+        <button data-a="1">1:1 <kbd>3</kbd></button>
+        <button data-a="1.25">4:5 <kbd>4</kbd></button>
+        <button data-a="1.7778">16:9 <kbd>5</kbd></button>
+        <button data-a="2.39">2.39:1 <kbd>6</kbd></button>
+      </div>
+      <div class="muted edit-keys"><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move the crop &nbsp;<kbd>−</kbd><kbd>+</kbd> resize it</div>
       </div>
       <div class="editor-actions">
-        <button id="edit-reset" class="btn quiet">Reset</button>
-        <button id="edit-cancel" class="btn quiet">Cancel</button>
-        <button id="edit-done" class="btn primary">Done</button>
+        <button id="edit-reset" class="btn quiet">Reset <kbd>R</kbd></button>
+        <button id="edit-cancel" class="btn quiet">Cancel <kbd>Esc</kbd></button>
+        <button id="edit-done" class="btn primary">Done <kbd>↵</kbd></button>
       </div>
     </div>
   </section>
@@ -130,57 +140,75 @@
         <div id="staged-summary" class="muted"></div>
       </div>
       <div class="staged-actions">
-        <label id="raw-opt" class="raw-opt" title="Also copy the RAW (.RAF) file for each photo that has one"><input type="checkbox" id="with-raw"> Include RAW <span id="raw-count" class="muted"></span></label>
+        <label id="raw-opt" class="raw-opt" title="Also copy the RAW (.RAF) file for each photo that has one"><input type="checkbox" id="with-raw"> Include RAW <span id="raw-count" class="muted"></span> <kbd>R</kbd></label>
         <span class="muted">to</span>
-        <button id="dest" class="link dest" title="Change destination"></button>
+        <button id="dest" class="link dest" title="Change destination (D)"></button><kbd>D</kbd>
         <button id="clear-flags" class="btn quiet">Clear</button>
-        <button id="export" class="btn primary">Export</button>
-        <button id="staged-close" class="link close" title="Close (Esc)" aria-label="Close picks">×</button>
+        <button id="export" class="btn primary">Export</button><kbd class="after">E</kbd>
+        <button id="staged-close" class="link close" title="Close (Esc or S)" aria-label="Close picks">×</button>
       </div>
     </div>
     <div id="export-progress"><div></div></div>
     <div id="export-result" class="muted"></div>
     <div id="staged-scroll">
       <div id="staged-grid"></div>
-      <div id="dest-head"></div>
-      <div id="dest-grid"></div>
+      <div id="dest-head" class="full-only"></div>
+      <div id="dest-grid" class="full-only"></div>
     </div>
   </section>
 
   <section id="help" hidden>
     <div class="help-inner">
-      <h2>Keys</h2>
-      <dl>
-        <dt>← →</dt><dd>previous / next set</dd>
-        <dt>⇧ ← →</dt><dd>jump ten sets</dd>
-        <dt>1 2 3</dt><dd>pick that look (in the large view: show it)</dd>
-        <dt>⌘ 1 2 3</dt><dd>add / remove a look (pick several)</dd>
-        <dt>0</dt><dd>unstage this set</dd>
-        <dt>⌘ ⌫</dt><dd>delete every version from the card (⌘Z undoes, 10 s)</dd>
-        <dt>space</dt><dd>inspect the pick full screen; 1 2 3 switch looks</dd>
-        <dt>click</dt><dd>view one look large</dd>
-        <dt>↑ ↓</dt><dd>cycle looks (large view)</dd>
-        <dt>Z</dt><dd>actual pixels (large view)</dd>
-        <dt>C</dt><dd>straighten &amp; crop (applies to all looks of the shot)</dd>
-        <dt>I</dt><dd>camera settings &amp; film recipe</dd>
-        <dt>H</dt><dd>histogram</dd>
-        <dt>`</dt><dd>loupe (scroll to zoom)</dd>
-        <dt>J</dt><dd>clipping: red blown, blue crushed</dd>
-        <dt>A</dt><dd>annotations: focus point, faces</dd>
-        <dt>L</dt><dd>library of the export folder (0–5 stars, P flag)</dd>
-        <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
-        <dt>space</dt><dd>play / pause (video)</dd>
-        <dt>F</dt><dd>full screen</dd>
-        <dt>S</dt><dd>your picks</dd>
-        <dt>E</dt><dd>export your picks</dd>
-        <dt>Home End</dt><dd>first / last set</dd>
-        <dt>B</dt><dd>brackets only / all photos</dd>
-        <dt>U</dt><dd>next set with nothing picked</dd>
-        <dt>G</dt><dd>overview: thumbnails of every set</dd>
-        <dt>O</dt><dd>open another folder</dd>
-        <dt>⌘ E</dt><dd>eject the card</dd>
-        <dt>Esc</dt><dd>back</dd>
-      </dl>
+      <h2>Everything has a key</h2>
+      <p class="help-lede">Brackit is made to be used without the mouse. Every button shows its key; this is the full list.</p>
+      <div class="help-cols">
+        <dl>
+          <dt class="group">Flip and pick</dt><dd></dd>
+          <dt>← →  ↑ ↓  k j</dt><dd>previous / next set</dd>
+          <dt>⇧ + those</dt><dd>jump ten sets</dd>
+          <dt>Home End</dt><dd>first / last set</dd>
+          <dt>1 2 3</dt><dd>pick that look</dd>
+          <dt>⌘ 1 2 3</dt><dd>add / remove a look (keep several)</dd>
+          <dt>0</dt><dd>unpick this set</dd>
+          <dt>U</dt><dd>next set with nothing picked</dd>
+          <dt>B</dt><dd>brackets only / all photos</dd>
+          <dt>G</dt><dd>overview of every set (arrows, ↵)</dd>
+          <dt class="group">Look closely</dt><dd></dd>
+          <dt>Space</dt><dd>the pick full screen; again to go back</dd>
+          <dt>1 2 3</dt><dd>switch looks there</dd>
+          <dt>Z</dt><dd>actual pixels</dd>
+          <dt>`</dt><dd>loupe (scroll to zoom)</dd>
+          <dt>H</dt><dd>histogram</dd>
+          <dt>W</dt><dd>clipping warnings: red blown, blue crushed</dd>
+          <dt>A</dt><dd>focus point and faces</dd>
+          <dt>I</dt><dd>camera settings, recipe, all metadata</dd>
+          <dt>C</dt><dd>straighten and crop</dd>
+        </dl>
+        <dl>
+          <dt class="group">Crop</dt><dd></dd>
+          <dt>[ ]</dt><dd>straighten 0.1° (⇧ 1°)</dd>
+          <dt>arrows</dt><dd>move the crop (⇧ further)</dd>
+          <dt>− +</dt><dd>smaller / larger crop</dd>
+          <dt>1 – 6</dt><dd>free, original (the default), 1:1, 4:5, 16:9, 2.39:1</dd>
+          <dt>↵ / Esc</dt><dd>done / cancel</dd>
+          <dt class="group">Export and card</dt><dd></dd>
+          <dt>S</dt><dd>your picks (there: R RAW, D folder)</dd>
+          <dt>E</dt><dd>export your picks</dd>
+          <dt class="full-only">⌘ ⌫</dt><dd class="full-only">delete the set from the card</dd>
+          <dt class="full-only">⌘ Z</dt><dd class="full-only">undo the delete (10 s)</dd>
+          <dt class="full-only">⌘ E</dt><dd class="full-only">eject the card</dd>
+          <dt>O</dt><dd>another folder, other days, other card</dd>
+          <dt class="group full-only">Library</dt><dd class="full-only"></dd>
+          <dt class="full-only">L</dt><dd class="full-only">library of the export folder</dd>
+          <dt class="full-only">0 – 5  P</dt><dd class="full-only">stars, flag</dd>
+          <dt class="full-only">[ ]  T</dt><dd class="full-only">folder, film simulation</dd>
+          <dt class="full-only">⇧ 0 – 5  ⇧ P</dt><dd class="full-only">show rated, show flagged</dd>
+          <dt class="group">Anywhere</dt><dd></dd>
+          <dt>M</dt><dd>menu (↑ ↓ ↵)</dd>
+          <dt>F</dt><dd>full screen</dd>
+          <dt>Esc</dt><dd>back</dd>
+        </dl>
+      </div>
     </div>
   </section>
 

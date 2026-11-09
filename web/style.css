@@ -475,3 +475,92 @@ body.loupe-on .look .frame, body.loupe-on #solo-frame, body.loupe-on #lib-view-f
 .crop-view .crop-frame img { position: absolute; inset: 0; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; transform-origin: 50% 50%; opacity: 1; }
 .look.flagged .frame .crop-view { box-shadow: 0 0 0 2px var(--accent); }
 .crop-view.lowres { filter: blur(0.5px); }
+
+/* ---------- keys: every button shows its key, quietly ---------- */
+kbd {
+  display: inline-block; min-width: 1.5em; padding: 0 4px; margin: 0 1px;
+  font: 10.5px/15px var(--font); text-align: center; color: var(--muted);
+  border: 1px solid var(--faint); border-bottom-width: 2px; border-radius: 3px;
+  vertical-align: 1px;
+}
+#bar kbd { color: var(--tick); border-color: var(--hair); margin-left: 3px; }
+#bar .link:hover kbd { color: var(--muted); border-color: var(--faint); }
+kbd.after { margin-left: -6px; }
+.btn kbd { margin-left: 6px; border-color: var(--hair); }
+.btn.primary kbd { color: var(--accent); border-color: rgba(240,166,64,.35); }
+.quick kbd, .aspects kbd { margin-left: 3px; color: var(--tick); border-color: var(--hair); }
+.lede { margin-bottom: 14px; }
+.keyline { color: var(--muted); margin: 0 0 30px; line-height: 2; }
+.keyline kbd { color: var(--ink); }
+.keyline kbd + kbd { margin-left: 2px; }
+.volume .name kbd { margin-right: 10px; color: var(--tick); border-color: var(--hair); }
+.volume:hover .name kbd { color: var(--accent); }
+.edit-keys { margin-right: 10px; }
+.edit-keys kbd { color: var(--tick); border-color: var(--hair); }
+#key-hint { margin-left: auto; color: var(--tick); }
+#key-hint kbd { color: var(--muted); border-color: var(--hair); }
+body.fs #key-hint { display: none; }
+
+/* the key sheet: two columns of groups */
+.help-inner { max-width: 820px; padding: 0 24px; }
+.help-inner h2 { margin-bottom: 6px; }
+.help-lede { color: var(--muted); margin: 0 0 22px; font-size: 13px; }
+.help-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+.help-inner dl { grid-template-columns: 116px auto; gap: 6px 18px; align-content: start; }
+.help-inner dt.group { grid-column: 1 / -1; text-align: left; color: var(--muted); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; margin-top: 14px; padding-bottom: 2px; border-bottom: 1px solid var(--hair); }
+.help-inner dt.group:first-child { margin-top: 0; }
+.help-inner dt.group + dd { display: none; }
+@media (max-width: 760px) { .help-cols { grid-template-columns: 1fr; } }
+@media (max-height: 700px) and (min-width: 860px) {
+  .help-inner dl { grid-template-columns: 116px auto; }
+}
+.lib-keys { margin-left: auto; color: var(--tick); white-space: pre; align-self: center; }
+.lib-keys kbd { color: var(--muted); border-color: var(--hair); }
+.cleanup kbd { margin-left: 4px; }
+.btn, .edit-keys, .raw-opt, .quick button, .aspects button { white-space: nowrap; }
+.editor-mid { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.edit-keys { margin: 0; color: var(--tick); }
+.editor-actions { align-items: center; }
+
+/* ---------- Brackit Lite (the web version) and touch ---------- */
+body:not(.lite) .lite-only, body.lite .full-only, body:not(.touch) .touch-only { display: none !important; }
+.lite-tag {
+  margin-left: 12px; padding: 2px 7px 1px; vertical-align: 6px;
+  font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--faint); border-radius: 3px;
+}
+.actions .btn + .btn { margin-left: 8px; }
+.lite-note { margin-top: 18px; }
+.lite-note p { color: var(--muted); margin: 0 0 10px; line-height: 1.5; font-size: 13px; }
+.lite-note b { color: var(--ink); font-weight: 500; }
+.lite-note a { color: var(--ink); }
+.share-now { margin-right: 4px; }
+
+/* phones held upright: the looks stacked */
+#stage.gcol { flex-direction: column; justify-content: center; row-gap: var(--gap); }
+#stage.gcol .look { flex: 0 0 auto; }
+
+/* touch: swipes are ours; pinch still zooms; actual pixels pans */
+body.touch #stage, body.touch #solo { touch-action: pinch-zoom; }
+body.touch #solo.zoom #solo-frame { touch-action: pan-x pan-y pinch-zoom; }
+body.touch kbd { display: none; }
+body.touch .look .frame { cursor: pointer; }
+
+@media (max-width: 700px) {
+  #bar { padding: 0 10px; }
+  #bar .left, #bar .right { gap: 14px; }
+  #bar kbd, #ov-btn, #fs-btn, #help-btn, #folder { display: none !important; }
+  #stage { left: 8px; right: 8px; }
+  #index { left: 10px; right: 10px; }
+  #set-files { display: none; }
+  #key-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .staged-head { flex-wrap: wrap; gap: 12px; }
+  .staged-actions { flex-wrap: wrap; gap: 10px; }
+  .survey-head { flex-wrap: wrap; gap: 8px; }
+  .survey-label .quick { flex-wrap: wrap; }
+}
+body.touch .no-touch { display: none !important; }
+@media (max-width: 700px) {
+  #staged-close { position: absolute; top: 12px; right: 14px; }
+  .keyline { line-height: 1.5; }
+}

@@ -17,6 +17,25 @@ I vibe coded it on the Shinkansen from Kanazawa to Tokyo, after one too many
 evenings of flipping through stacks of triple JPEGs. I made it for myself, but
 if you bracket film simulations too, you'll probably find it useful.
 
+## Made for the keyboard
+
+The whole thing works without the mouse: choosing the card and the days,
+flipping, picking, looking closely, cropping, exporting, clearing the card and
+ejecting it. One hand on the arrows, the other on 1, 2 and 3. That is what
+makes a few hundred shots go quickly. Every button in the app shows its key,
+and <kbd>?</kbd> lists them all.
+
+<dl class="keys">
+  <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>previous or next shot (or <kbd>↑</kbd> <kbd>↓</kbd>, or <kbd>k</kbd> <kbd>j</kbd>)</dd>
+  <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>keep that look (<kbd>⌘</kbd> + number to keep more than one)</dd>
+  <dt><kbd>Space</kbd></dt><dd>the pick full screen</dd>
+  <dt><kbd>Z</kbd> <kbd>`</kbd> <kbd>H</kbd> <kbd>W</kbd></dt><dd>actual pixels, loupe, histogram, clipping</dd>
+  <dt><kbd>C</kbd></dt><dd>straighten and crop</dd>
+  <dt><kbd>E</kbd></dt><dd>copy the picks off the card</dd>
+  <dt><kbd>⌘</kbd> <kbd>⌫</kbd></dt><dd>delete a shot from the card (with undo)</dd>
+  <dt><kbd>⌘</kbd> <kbd>E</kbd></dt><dd>eject</dd>
+</dl>
+
 ## How it works
 
 1. Put the card in and open Brackit. Pick a folder or a few days, or just the
@@ -47,6 +66,20 @@ on a photo to look closely.
 - The film recipe: simulation, grain, Color Chrome, white balance shift,
   dynamic range, tone, and every other tag in the file.
 - Straighten and crop before export. The card itself is never changed.
+
+## Brackit Lite
+
+[Brackit Lite](lite/) is the same thing in a web browser, for when you're away
+from your computer, or on a computer where you can't install anything. On an
+iPhone or iPad, put the card in a card reader, open Lite in Safari and choose
+the photos from the card. Exports go to Photos or Files through the share
+sheet; in Chrome or Edge on a computer they go straight into a folder. Add it
+to your home screen and it opens like an app, without a connection too.
+
+It reads the photos with the same code as the desktop app, and nothing leaves
+your device. What it can't do is change the card: deleting the looks you
+didn't pick, ejecting, and the library of your export folder are only in the
+desktop app.
 
 There's also a library for the export folder, with 0–5 stars, a flag, and
 filters by simulation. It runs on macOS, Windows and Linux, works offline,

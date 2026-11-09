@@ -23,6 +23,12 @@ const api = async (method, url, body) => {
 const dpr = () => window.devicePixelRatio || 1;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
+// Brackit Lite (the web version) answers /api in the browser; see lite.js.
+const LITE = window.BrackitLite || null;
+// Media the page loads by setting src (not fetch) go through Lite there.
+const mediaUrl = (u) => (LITE ? LITE.url(u) : u);
+const homeless = (path) => (S.server.home ? path.replace(S.server.home, '~') : path);
+
 const S = {
   server: null,
   lib: null, // {root, sets, photos}
@@ -81,11 +87,15 @@ async function showWelcome() {
   if (S.server.lastRoot && !entries.some((e) => e.path === S.server.lastRoot)) {
     entries.push({ name: S.server.lastRoot.split('/').filter(Boolean).pop() || '/', path: S.server.lastRoot, where: 'last opened' });
   }
-  for (const v of entries) {
+  entries.forEach((v, i) => {
     const row = el('div', 'volume-row');
     const b = el('button', 'volume');
     const where = el('span', 'where', v.where === 'card' ? v.path : v.where);
-    b.append(el('span', 'name', v.name), where);
+    const name = el('span', 'name');
+    if (i < 9) name.append(el('kbd', '', String(i + 1)));
+    name.append(v.name);
+    b.append(name, where);
+    b.dataset.n = i + 1;
     b.onclick = () => openFolder(v.path);
     row.append(b);
     if (v.ejectable) {
@@ -96,7 +106,7 @@ async function showWelcome() {
       row.append(ej);
     }
     box.append(row);
-  }
+  });
   $('#path-input').value = '';
 }
 
@@ -193,7 +203,8 @@ function showSurvey(sv) {
   const newBtn = $('#survey-quick [data-q="new"]');
   newBtn.hidden = !since;
   if (since) {
-    newBtn.textContent = since.count ? `New since last import (${fmtN(since.count)})` : 'Nothing new since last import';
+    newBtn.textContent = since.count ? `New since last import (${fmtN(since.count)}) ` : 'Nothing new since last import';
+    if (since.count) newBtn.append(el('kbd', '', 'N'));
     newBtn.disabled = !since.count;
     // straight to what's new: Enter opens just the shots you haven't imported
     if (since.count) {
@@ -387,6 +398,34 @@ function quickRange(q) {
   else if (q === 'week') setRange(fmtDayUTC(parseDay(last) - 6 * dayMs), last);
 }
 
+// Keyboard range: ← → select one shooting day at a time; with ⇧ the range
+// grows or shrinks at its end. Days without shots are skipped.
+function stepDay(d, widen) {
+  const days = SV.days.map((x) => x.day);
+  if (!days.length) return;
+  const whole = !SV.from && !SV.to && !SV.after;
+  if (!widen) {
+    const at = whole ? (d > 0 ? -1 : days.length) : days.indexOf(SV.to || SV.from);
+    const base = at === -1 && !whole ? days.findIndex((x) => x >= (SV.to || SV.from)) : at;
+    const i = clamp(base + d, 0, days.length - 1);
+    return setRange(days[i], days[i]);
+  }
+  const from = SV.from || days[0];
+  let to = SV.to || days.at(-1);
+  let i = days.indexOf(to);
+  if (i === -1) i = days.findIndex((x) => x >= to);
+  const lo = days.findIndex((x) => x >= from);
+  i = clamp(i + d, Math.max(0, lo), days.length - 1);
+  setRange(from, days[i]);
+}
+
+function stepSurveyFolder(d) {
+  const chips = [...document.querySelectorAll('#survey-folders .chip')];
+  if (chips.length < 2 || $('#survey-folders-row').hidden) return;
+  const i = chips.findIndex((c) => c.dataset.folder === SV.folder);
+  chips[(i + d + chips.length) % chips.length].click();
+}
+
 function bindSurvey() {
   const svg = $('#survey-chart');
   svg.addEventListener('pointerdown', (e) => {
@@ -405,7 +444,10 @@ function bindSurvey() {
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
   svg.addEventListener('dblclick', () => setRange(null, null));
-  $('#survey-quick').onclick = (e) => e.target.dataset.q && quickRange(e.target.dataset.q);
+  $('#survey-quick').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b && b.dataset.q) quickRange(b.dataset.q);
+  };
   $('#survey-open').onclick = () => openScoped();
   $('#survey-back').onclick = () => {
     surveyToken++;
@@ -485,6 +527,7 @@ function loadLibrary(lib) {
   $('#bar .center').hidden = false;
   $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = false;
   $('#eject-btn').hidden = !(lib.volume && lib.volume.ejectable);
+  $('#key-hint').hidden = keysLearned();
   $('#folder').textContent = scopeLabel(lib);
   $('#folder').hidden = false;
   $('#folder').title = lib.root + ' — choose another card, folder or dates (O)';
@@ -787,14 +830,10 @@ function layoutFor(set) {
   const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
   let imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
   let lookW = (SW - gap * (n - 1)) / n;
-  if (n === 3) {
-    const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
-    const rowH = (SH - gap - 2 * CAPTION_H) / 2;
-    const twoOne = Math.min((SW - gap) / 2, rowH * a);
-    if (twoOne > inRow * 1.04) {
-      imgMax = Math.floor(rowH);
-      lookW = (SW - gap) / 2;
-    }
+  const shape = n > 1 && set.kind !== 'video' ? stageShape(SW, SH, gap, n, a) : null;
+  if (shape) {
+    imgMax = shape.imgMax;
+    lookW = shape.lookW;
   }
   return { imgMax, lookW, a };
 }
@@ -1074,6 +1113,7 @@ function selectOnly(pos) {
   });
   saveFlags();
   updateFlagsUi();
+  learnKeys();
   return true;
 }
 
@@ -1085,6 +1125,7 @@ function toggleFlag(pos) {
   else S.flags.add(p.key);
   saveFlags();
   updateFlagsUi();
+  learnKeys();
   return true;
 }
 
@@ -1210,7 +1251,7 @@ function render() {
     if (p.kind === 'video') {
       look.classList.add('video');
       const v = document.createElement('video');
-      v.src = previewUrl(id);
+      v.src = mediaUrl(previewUrl(id));
       v.controls = true;
       v.preload = 'metadata';
       v.playsInline = true;
@@ -1226,7 +1267,7 @@ function render() {
       return;
     }
 
-    frame.onclick = () => openSolo(pos);
+    frame.onclick = () => (lastPointer === 'touch' ? tapLook(pos) : openSolo(pos));
     frame.dataset.photo = id; // for the loupe
     frame.dataset.src = 'card';
     const edit = editOf(p);
@@ -1278,25 +1319,39 @@ function photoAspect(p) {
   if (p.orientation >= 5 && p.orientation <= 8) [w, h] = [h, w];
   return w / h;
 }
+// The arrangement that shows the photos biggest: all in a row, 2 + 1 (for
+// three), or stacked in a column (a phone held upright). Null = in a row.
+function stageShape(SW, SH, gap, n, a) {
+  const inRow = Math.min((SW - (n - 1) * gap) / n, (SH - CAPTION_H) * a);
+  const colH = (SH - (n - 1) * gap - n * CAPTION_H) / n;
+  const inCol = Math.min(SW, colH * a);
+  let best = { w: inRow, cls: null };
+  if (n === 3) {
+    const rowH = (SH - gap - 2 * CAPTION_H) / 2;
+    const twoOne = Math.min((SW - gap) / 2, rowH * a);
+    if (twoOne > best.w * 1.04) best = { w: twoOne, cls: 'g21', imgMax: Math.floor(rowH), lookW: (SW - gap) / 2 };
+  }
+  if (inCol > best.w * 1.04) best = { w: inCol, cls: 'gcol', imgMax: Math.floor(colH), lookW: SW };
+  return best.cls ? best : null;
+}
+
 function layoutStage(stage, set) {
-  stage.classList.remove('g21');
+  stage.classList.remove('g21', 'gcol');
   const SW = stage.clientWidth;
   const SH = stage.clientHeight;
   // tallest a photo may be (one row); known in px so placeholders can be sized
   S.imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
   stage.style.setProperty('--img-max', `${S.imgMax}px`);
-  if (set.photos.length !== 3 || set.kind === 'video') return;
+  if (set.photos.length < 2 || set.kind === 'video') return;
   const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
   // the shape on screen: a crop changes it
   const p0 = photo(set.photos[0]);
   const ed = editOf(p0);
   const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
-  const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
-  const rowH = (SH - gap - 2 * CAPTION_H) / 2;
-  const twoOne = Math.min((SW - gap) / 2, rowH * a);
-  if (twoOne > inRow * 1.04) {
-    stage.classList.add('g21');
-    S.imgMax = Math.floor(rowH);
+  const shape = stageShape(SW, SH, gap, set.photos.length, a);
+  if (shape) {
+    stage.classList.add(shape.cls);
+    S.imgMax = shape.imgMax;
     stage.style.setProperty('--img-max', `${S.imgMax}px`);
   }
 }
@@ -1899,7 +1954,7 @@ function openEditor(pos) {
     img: null,
     angle: existing.angle,
     crop: { ...existing.crop },
-    aspect: existing.aspect || 'free',
+    aspect: (editOf(p) && existing.aspect) || 'orig',
   };
   $('#editor').hidden = false;
   $('#angle').value = existing.angle;
@@ -2009,6 +2064,32 @@ function setAngle(a) {
   if (!S.editor) return;
   S.editor.angle = clamp(Math.round(a * 100) / 100, -15, 15);
   $('#angle').value = S.editor.angle;
+  drawEditor();
+}
+
+// Crop from the keyboard: arrows move the box, − + resize it about its centre
+// (keeping a locked aspect ratio).
+function nudgeCrop(k, step) {
+  const ed = S.editor;
+  if (!ed || !ed.img) return;
+  const c = ed.crop;
+  const dx = k === 'ArrowLeft' ? -step : k === 'ArrowRight' ? step : 0;
+  const dy = k === 'ArrowUp' ? -step : k === 'ArrowDown' ? step : 0;
+  ed.crop = { ...c, x: clamp(c.x + dx, 0, 1 - c.w), y: clamp(c.y + dy, 0, 1 - c.h) };
+  drawEditor();
+}
+
+function scaleCrop(f) {
+  const ed = S.editor;
+  if (!ed || !ed.img) return;
+  const c = ed.crop;
+  // one factor for both sides keeps the shape; never past the photo's edge
+  const k = clamp(f, 0.04 / Math.min(c.w, c.h), 1 / Math.max(c.w, c.h));
+  const w = c.w * k;
+  const h = c.h * k;
+  const cx = c.x + c.w / 2;
+  const cy = c.y + c.h / 2;
+  ed.crop = { x: clamp(cx - w / 2, 0, 1 - w), y: clamp(cy - h / 2, 0, 1 - h), w, h };
   drawEditor();
 }
 
@@ -2134,7 +2215,7 @@ async function renderStaged() {
   if (raws.size && withRaw()) parts.push(`${fmtN(raws.size)} RAW`);
   const total = bytes + (withRaw() ? rawBytes : 0);
   $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(total)}` : 'No picks yet';
-  $('#dest').textContent = S.dest.replace(S.server.home, '~');
+  $('#dest').textContent = homeless(S.dest);
   $('#dest').title = S.dest;
   const pending = items.filter((p) => !written(p)).length;
   $('#export').disabled = !pending;
@@ -2181,7 +2262,7 @@ async function renderStaged() {
     thumb._load = () => {
       if (p.kind === 'video') {
         const v = document.createElement('video');
-        v.src = previewUrl(p.id) + '#t=0.5';
+        v.src = mediaUrl(previewUrl(p.id) + '#t=0.5');
         v.preload = 'metadata';
         v.muted = true;
         thumb.append(v);
@@ -2189,7 +2270,7 @@ async function renderStaged() {
       }
       const img = new Image();
       img.decoding = 'async';
-      img.src = previewUrl(p.id);
+      img.src = mediaUrl(previewUrl(p.id));
       const edit = editOf(p);
       img.decode().then(() => thumb.append(edit ? renderEdited(img, edit, 700) : img), () => {});
     };
@@ -2228,6 +2309,7 @@ async function doExport() {
     bar.style.width = (100 * done) / total + '%';
     result.textContent = `Exporting ${done} of ${total}${name ? ' · ' + name : ''}`;
   };
+  if (LITE) return liteExport(items, bar, result);
   try {
     const plain = items.filter((p) => !editOf(p));
     const edited = items.filter((p) => editOf(p));
@@ -2274,6 +2356,9 @@ async function doExport() {
       tick();
     }
     for (const p of items) if (!failed.some((f) => f.name === p.name)) S.exported.add(p.key);
+    try {
+      if (copied) localStorage.setItem('brackit:keysLearned', '1'); // the key hint has done its job
+    } catch {}
     bar.style.width = '100%';
     $('#export-progress').classList.add('done');
     result.innerHTML = '';
@@ -2281,7 +2366,7 @@ async function doExport() {
     if (skipped) bits.push(`${skipped} already there`);
     if (failed.length) bits.push(`${failed.length} failed — ${failed[0].name}: ${failed[0].error}${failed.length > 1 ? ' (and others)' : ''}`);
     result.append(el('span', '', bits.join(' · ') + ' → '));
-    const reveal = el('button', '', S.dest.replace(S.server.home, '~'));
+    const reveal = el('button', '', homeless(S.dest));
     reveal.title = 'Show in Finder';
     reveal.onclick = () => api('POST', '/api/reveal', { path: S.dest });
     result.append(reveal);
@@ -2289,6 +2374,7 @@ async function doExport() {
     if (unpicked.length) {
       const clean = el('button', 'cleanup', `Delete ${fmtN(unpicked.length)} unpicked look${unpicked.length === 1 ? '' : 's'} from the card`);
       clean.title = 'The looks you didn\'t pick in these sets. Your picks and RAW files stay. Undo for 10 s.';
+      clean.append(' ', el('kbd', '', 'X'));
       clean.onclick = () => {
         clean.remove();
         cleanUpCard(items);
@@ -2336,7 +2422,7 @@ function renderDest(dest) {
   head.hidden = grid.hidden = false;
   const bytes = dest.files.reduce((a, f) => a + f.size, 0);
   head.append(
-    el('span', '', `Already in ${S.dest.replace(S.server.home, '~')}`),
+    el('span', '', `Already in ${homeless(S.dest)}`),
     el('span', 'muted', `${fmtN(dest.files.length)} file${dest.files.length === 1 ? '' : 's'} · ${fmtBytes(bytes)}`)
   );
   const io = stagedObserver();
@@ -2361,10 +2447,41 @@ function renderDest(dest) {
   }
 }
 
+// Brackit Lite: to a folder, the share sheet or Downloads (see lite.js).
+async function liteExport(items, bar, result) {
+  try {
+    const r = await LITE.exportPicks(items, {
+      withRaw: withRaw(),
+      bar,
+      result,
+      tick: (done, total, name) => {
+        bar.style.width = (100 * done) / total + '%';
+        result.textContent = `Preparing ${done} of ${total}${name ? ' · ' + name : ''}`;
+      },
+    });
+    if (r) {
+      bar.style.width = '100%';
+      $('#export-progress').classList.add('done');
+      const bits = [`${LITE.mode === 'share' ? 'Saved' : 'Copied'} ${r.copied}`];
+      if (r.skipped) bits.push(`${r.skipped} already there`);
+      if (r.failed.length) bits.push(`${r.failed.length} failed — ${r.failed[0].name}: ${r.failed[0].error}`);
+      result.textContent = `${bits.join(' · ')} → ${r.where}`;
+      render();
+      renderStaged();
+    }
+  } catch (e) {
+    result.textContent = 'Export failed: ' + e.message;
+  } finally {
+    exporting = false;
+    LITE.pendingShare = null;
+    $('#export').disabled = false;
+  }
+}
+
 async function exportEdited(p, edit) {
   const img = new Image();
   img.decoding = 'async';
-  img.src = fullUrl(p.id);
+  img.src = mediaUrl(fullUrl(p.id));
   await img.decode();
   const canvas = renderEdited(img, edit);
   const w = canvas.width;
@@ -2377,6 +2494,61 @@ async function exportEdited(p, edit) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'export failed');
   return data;
+}
+
+/* ------------------------------------------------------------ touch */
+
+// Phones and tablets: swipe to flip (left or up = next, like → and ↓), tap a
+// look to pick it (again to unpick), double-tap to see it large.
+let lastPointer = 'mouse';
+let swipedAt = -1e9;
+let lastTap = { pos: -1, t: -1e9 };
+
+function tapLook(pos) {
+  const now = performance.now();
+  const double = lastTap.pos === pos && now - lastTap.t < 350;
+  lastTap = { pos, t: now };
+  const set = S.view[S.idx];
+  if (!set) return;
+  if (double) return openSolo(pos);
+  const only = set.photos.filter((id) => S.flags.has(photo(id).key));
+  if (only.length === 1 && only[0] === set.photos[pos]) clearSet();
+  else selectOnly(pos);
+}
+
+function bindTouch() {
+  document.addEventListener('pointerdown', (e) => (lastPointer = e.pointerType), true);
+  let t0 = null;
+  const start = (e) => {
+    if (e.pointerType === 'touch' && e.isPrimary && !(S.solo && S.solo.zoom)) t0 = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+  };
+  const end = (e) => {
+    if (!t0 || e.pointerType !== 'touch') return;
+    const dx = e.clientX - t0.x;
+    const dy = e.clientY - t0.y;
+    const quick = e.timeStamp - t0.t < 800;
+    t0 = null;
+    if (!quick || Math.max(Math.abs(dx), Math.abs(dy)) < 40) return;
+    const d = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : -1) : dy < 0 ? 1 : -1;
+    swipedAt = performance.now();
+    go(d);
+  };
+  for (const id of ['#stage', '#solo']) {
+    $(id).addEventListener('pointerdown', start);
+    $(id).addEventListener('pointerup', end);
+    $(id).addEventListener('pointercancel', () => (t0 = null));
+  }
+  // the tap that ends a swipe isn't a click
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (performance.now() - swipedAt < 400 && e.target.closest && e.target.closest('#stage, #solo')) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    },
+    true
+  );
 }
 
 /* ------------------------------------------------------------ chrome */
@@ -2403,7 +2575,10 @@ function toast(msg, opts = {}) {
 const lastDeletes = []; // [{token, until, restore}], newest last; each undoable for a few seconds
 let lastDelete = null; // (kept in step with the newest, for the Menu)
 
+const LITE_NO = "Brackit Lite can't change the card. The desktop app can.";
+
 async function deleteSet() {
+  if (LITE) return toast(LITE_NO, { ms: 3000 });
   const set = S.view[S.idx];
   if (!set) return;
   const names = set.photos.map((id) => photo(id).name);
@@ -2450,6 +2625,7 @@ function pushDelete(d) {
 }
 
 async function undoDelete() {
+  if (LITE) return;
   while (lastDeletes.length && Date.now() > lastDeletes.at(-1).until) lastDeletes.pop();
   const d = lastDeletes.pop();
   lastDelete = lastDeletes.at(-1) || null;
@@ -2555,10 +2731,13 @@ function videoEl() {
 }
 
 function bindUi() {
-  $('#choose').onclick = async () => {
-    const p = await chooseFolder('Choose your SD card or a folder of photos', '/Volumes');
-    if (p) openFolder(p);
-  };
+  $('#choose').onclick = LITE
+    ? () => LITE.pick(LITE.canPickFolder ? 'folder' : 'files')
+    : async () => {
+        const p = await chooseFolder('Choose your SD card or a folder of photos', '/Volumes');
+        if (p) openFolder(p);
+      };
+  if (LITE) $('#lite-files').onclick = () => LITE.pick('files');
   $('#path-form').onsubmit = (e) => {
     e.preventDefault();
     const v = $('#path-input').value.trim();
@@ -2566,6 +2745,7 @@ function bindUi() {
   };
   $('#folder').onclick = () => (S.lib ? openFolder(S.lib.root) : showWelcome());
   bindSurvey();
+  bindTouch();
   $('#staged-btn').onclick = () => openStaged();
   $('#ov-btn').onclick = () => openOverview();
   $('#lib-btn').onclick = () => (LIB.open ? closeLibrary() : openLibrary());
@@ -2614,6 +2794,7 @@ function bindUi() {
     renderStaged();
   };
   $('#dest').onclick = async () => {
+    if (LITE) return LITE.chooseDest();
     const p = await chooseFolder('Export to…', S.dest);
     if (p) {
       S.dest = p;
@@ -2654,13 +2835,16 @@ function bindUi() {
   $('#angle').oninput = (e) => setAngle(parseFloat(e.target.value));
   $('#angle').onpointerdown = () => $('#editor').classList.add('rotating');
   window.addEventListener('pointerup', () => $('#editor').classList.remove('rotating'));
-  $('#aspects').onclick = (e) => e.target.dataset.a && setAspect(e.target.dataset.a);
+  $('#aspects').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b && b.dataset.a) setAspect(b.dataset.a);
+  };
   $('#edit-reset').onclick = () => {
     if (!S.editor) return;
     S.editor.angle = 0;
     S.editor.crop = { ...IDENTITY.crop };
     $('#angle').value = 0;
-    setAspect('free');
+    setAspect('orig');
   };
   $('#edit-cancel').onclick = () => closeEditor(false);
   $('#edit-done').onclick = () => closeEditor(true);
@@ -2706,7 +2890,7 @@ function bindUi() {
       if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
     }
     if (t && t.tagName === 'BUTTON' && !t.dataset.mouse && (e.key === ' ' || e.key === 'Enter')) return;
-    if (e.repeat && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) S.flipping = true;
+    if (e.repeat && FLIP_KEYS[e.key]) S.flipping = true;
     onKey(e);
   });
   // remember which buttons got focus from the mouse (vs. Tab)
@@ -2859,7 +3043,7 @@ const MENU = [
     { id: 'info', label: 'Camera settings & recipe', key: 'I', press: { key: 'i' }, when: isPhotoSet, on: () => S.showInfo },
     { id: 'histogram', label: 'Histogram', key: 'H', press: { key: 'h' }, when: inViewer, on: () => S.showHist },
     { id: 'loupe', label: 'Loupe', key: '`', press: { key: '`', code: 'Backquote' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.loupe },
-    { id: 'clipping', label: 'Clipping (blown / crushed)', key: 'J', press: { key: 'j' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.clip },
+    { id: 'clipping', label: 'Clipping (blown / crushed)', key: 'W', press: { key: 'w' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.clip },
     { id: 'annotations', label: 'Annotations (focus, faces)', key: 'A', press: { key: 'a' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.notes },
     { id: 'brackets', label: 'Brackets only', key: 'B', press: { key: 'b' }, when: inViewer, on: () => S.bracketsOnly },
   ]],
@@ -2870,7 +3054,7 @@ const MENU = [
     { id: 'unpick', label: 'Unpick this shot', key: '0', press: { key: '0', code: 'Digit0' }, when: inViewer },
     { id: 'nextunpicked', label: 'Next unpicked shot', key: 'U', press: { key: 'u' }, when: inViewer },
     { id: 'crop', label: 'Crop & straighten…', key: 'C', press: { key: 'c' }, when: isPhotoSet },
-    { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: inViewer },
+    { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: () => inViewer() && !LITE },
     { id: 'undo', label: 'Undo delete', key: '⌘Z', press: { key: 'z', metaKey: true }, when: () => lastDeletes.some((d) => Date.now() < d.until) },
   ]],
   ['Card', [
@@ -2878,7 +3062,7 @@ const MENU = [
     { id: 'eject', label: 'Eject card', key: '⌘E', press: { key: 'e', metaKey: true }, when: () => !!(S.lib && S.lib.volume && S.lib.volume.ejectable) },
   ]],
   ['Library', [
-    { id: 'library', label: 'Library of the export folder', key: 'L', press: { key: 'l' }, when: () => !!S.server, on: () => LIB.open },
+    { id: 'library', label: 'Library of the export folder', key: 'L', press: { key: 'l' }, when: () => !!S.server && !LITE, on: () => LIB.open },
   ]],
   ['Export', [
     { id: 'staged', label: 'Show picks', key: 'S', press: { key: 's' }, when: inViewer },
@@ -2906,7 +3090,21 @@ function runCommand(id) {
 }
 window.brackitCommand = runCommand; // the Mac app's menu bar calls this
 
-function openMenu() {
+// A quiet reminder of the main keys under the photos, until the first pick
+// (and never again once something has been exported).
+function keysLearned() {
+  try {
+    return localStorage.getItem('brackit:keysLearned') === '1';
+  } catch {
+    return false;
+  }
+}
+function learnKeys() {
+  const h = $('#key-hint');
+  if (h) h.hidden = true;
+}
+
+function openMenu(fromKey) {
   const box = $('#menu');
   box.replaceChildren();
   for (const [title, items] of MENU) {
@@ -2924,10 +3122,22 @@ function openMenu() {
     box.append(sec);
   }
   box.hidden = false;
+  if (fromKey) menuStep(1);
+}
+// ↑ ↓ move through the enabled menu items; ↵ runs the focused one
+function menuStep(d) {
+  const items = [...document.querySelectorAll('#menu .menu-item:not(:disabled)')];
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  const next = i === -1 ? (d > 0 ? 0 : items.length - 1) : (i + d + items.length) % items.length;
+  items[next].focus();
 }
 function closeMenu() {
   $('#menu').hidden = true;
 }
+
+// Forward and back through the sets: → ↓ j and ← ↑ k (and . ,), all the same.
+const FLIP_KEYS = { ArrowRight: 1, ArrowDown: 1, j: 1, J: 1, '.': 1, ArrowLeft: -1, ArrowUp: -1, k: -1, K: -1, ',': -1 };
 
 function onKey(e) {
   if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;
@@ -2951,11 +3161,21 @@ function onKey(e) {
   // the Library takes the keys it knows; inspection tools still work there
   if (typeof libraryKey === 'function' && libraryKey(e, k)) return e.preventDefault();
 
-  if (!$('#menu').hidden && e.key === 'Escape') {
+  if (!$('#menu').hidden) {
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      menuStep(k === 'ArrowDown' ? 1 : -1);
+      return e.preventDefault();
+    }
+    if (k === 'Enter' && document.activeElement && document.activeElement.classList.contains('menu-item')) {
+      document.activeElement.click();
+      return e.preventDefault();
+    }
     closeMenu();
+    if (k === 'Escape' || k === 'm' || k === 'M') return e.preventDefault();
+  } else if ((k === 'm' || k === 'M') && !S.editor) {
+    openMenu(true);
     return e.preventDefault();
   }
-  if (!$('#menu').hidden) closeMenu();
 
   if (!$('#help').hidden) {
     $('#help').hidden = true;
@@ -2972,7 +3192,7 @@ function onKey(e) {
       toggleLoupe();
       return e.preventDefault();
     }
-    if (k === 'j' || k === 'J') {
+    if ((k === 'w' || k === 'W') && $('#survey').hidden) {
       toggleClipping();
       return e.preventDefault();
     }
@@ -2992,13 +3212,17 @@ function onKey(e) {
     else if (k === '[' || k === '{') setAngle(S.editor.angle - (e.shiftKey ? 1 : 0.1));
     else if (k === ']' || k === '}') setAngle(S.editor.angle + (e.shiftKey ? 1 : 0.1));
     else if (k === 'r' || k === 'R') $('#edit-reset').click();
+    else if (/^[1-6]$/.test(k)) setAspect(['free', 'orig', '1', '1.25', '1.7778', '2.39'][Number(k) - 1]);
+    else if (k.startsWith('Arrow')) nudgeCrop(k, e.shiftKey ? 0.05 : 0.01);
+    else if (k === '-' || k === '_') scaleCrop(e.shiftKey ? 0.9 : 0.98);
+    else if (k === '=' || k === '+') scaleCrop(e.shiftKey ? 1.1 : 1.02);
     else return;
     return e.preventDefault();
   }
 
   if (!$('#overview').hidden) {
-    if (k === 'ArrowRight') moveOverviewCursor(OV.cursor + 1);
-    else if (k === 'ArrowLeft') moveOverviewCursor(OV.cursor - 1);
+    if (k === 'ArrowRight' || k === 'j' || k === 'J') moveOverviewCursor(OV.cursor + 1);
+    else if (k === 'ArrowLeft' || k === 'k' || k === 'K') moveOverviewCursor(OV.cursor - 1);
     else if (k === 'ArrowDown') overviewVertical(1);
     else if (k === 'ArrowUp') overviewVertical(-1);
     else if (k === 'Home') moveOverviewCursor(0);
@@ -3012,7 +3236,12 @@ function onKey(e) {
 
   if (!$('#staged').hidden) {
     if (k === 'Escape' || k === 's' || k === 'S') closeStaged();
-    else if (k === 'Enter' || k === 'e' || k === 'E') doExport();
+    else if (k === 'Enter' || k === 'e' || k === 'E') LITE && LITE.pendingShare ? LITE.pendingShare.click() : doExport();
+    else if ((k === 'r' || k === 'R') && !$('#raw-opt').hidden) {
+      $('#with-raw').checked = !$('#with-raw').checked;
+      $('#with-raw').onchange();
+    } else if (k === 'd' || k === 'D') $('#dest').click();
+    else if ((k === 'x' || k === 'X') && $('#export-result .cleanup')) $('#export-result .cleanup').click();
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -3025,6 +3254,19 @@ function onKey(e) {
     else if (k === 'l' || k === 'L') quickRange('last');
     else if (k === 'w' || k === 'W') quickRange('week');
     else if (k === 'n' || k === 'N') quickRange('new');
+    else if (k === 'ArrowLeft' || k === 'ArrowRight') stepDay(k === 'ArrowRight' ? 1 : -1, e.shiftKey);
+    else if (k === '[' || k === ']') stepSurveyFolder(k === ']' ? 1 : -1);
+    else if (k === 'f' || k === 'F') toggleFullscreen();
+    else return;
+    return e.preventDefault();
+  }
+
+  if (!$('#welcome').hidden) {
+    const n = /^[1-9]$/.test(k) && document.querySelector(`#volumes .volume[data-n="${k}"]`);
+    if (n) n.click();
+    else if (k === 'o' || k === 'O') $('#choose').click();
+    else if (LITE && (k === 'p' || k === 'P')) $('#lite-files').click();
+    else if (k === '/' && !LITE) $('#path-input').focus();
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -3044,15 +3286,11 @@ function onKey(e) {
   }
 
   const set = S.view[S.idx];
+  if (FLIP_KEYS[k]) {
+    go(FLIP_KEYS[k] * (e.shiftKey ? 10 : 1));
+    return e.preventDefault();
+  }
   switch (k) {
-    case 'ArrowRight':
-    case '.':
-      go(e.shiftKey ? 10 : 1);
-      break;
-    case 'ArrowLeft':
-    case ',':
-      go(e.shiftKey ? -10 : -1);
-      break;
     case 'Home':
       S.idx = 0;
       render();
@@ -3086,15 +3324,6 @@ function onKey(e) {
     }
     case '0':
       clearSet();
-      break;
-    case 'ArrowUp':
-    case 'ArrowDown':
-      if (S.solo && set) {
-        const n = set.photos.length;
-        S.solo.pos = (S.solo.pos + (k === 'ArrowDown' ? 1 : -1) + n) % n;
-        S.solo.zoom = S.solo.zoom || false;
-        renderSolo();
-      } else return;
       break;
     case ' ': {
       const v = videoEl();
@@ -3160,7 +3389,8 @@ function onKey(e) {
       break;
     case 'l':
     case 'L':
-      openLibrary();
+      if (LITE) toast('The Library of your export folder is in the desktop app', { ms: 3000 });
+      else openLibrary();
       break;
     case 'o':
     case 'O':
@@ -3173,6 +3403,12 @@ function onKey(e) {
   e.preventDefault();
 }
 
-boot().catch((e) => {
-  document.body.textContent = 'Brackit could not start: ' + e.message;
-});
+// Start once every script on the page has run (tools.js and library.js come
+// after this one; Brackit Lite answers the first request instantly).
+function start() {
+  boot().catch((e) => {
+    document.body.textContent = 'Brackit could not start: ' + e.message;
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+else start();

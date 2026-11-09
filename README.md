@@ -11,16 +11,24 @@ SD card, shows them side by side with the simulation's name under each, and
 you press `1`, `2` or `3` to keep the one you want. Then it copies just those
 off the card.
 
+It's made for the keyboard. Every step, from choosing the card to ejecting it,
+is a key, so you can go through a few hundred shots without reaching for the
+mouse. Every button in the app shows its key, and `?` lists them all.
+
 I made it for myself, but if you use film simulation bracketing too, it's
 probably useful to you as well.
 
 **[Website](https://lawrenceleejr.github.io/Brackit/)** ·
-**[Download](https://github.com/lawrenceleejr/Brackit/releases/latest)**
+**[Download](https://github.com/lawrenceleejr/Brackit/releases/latest)** ·
+**[Brackit Lite](https://lawrenceleejr.github.io/Brackit/lite/)** (in the browser, iPhone and iPad too)
 
 ![Brackit showing one shot in Classic Chrome, Classic Neg. and Acros side by side](site/static/img/brackets.jpg)
 
 ## What it does
 
+- **Keyboard first.** Arrows (or `j` / `k`) to flip, `1` `2` `3` to pick, `Space` to look
+  closely, `E` to export. The start screen, the date chooser, the crop tool,
+  the picks, the library and the menu all work from the keys too.
 - **Brackets side by side.** Each shutter press is one set of three looks, in
   a row or two-over-one, whichever shows them bigger. The film simulation is
   read from the camera's own metadata.
@@ -31,7 +39,7 @@ probably useful to you as well.
   more than one). `E` copies everything you picked to a folder, untouched.
   Optionally the RAW (`.RAF`) too.
 - **Look closely.** `Space` shows a look full screen. There's a loupe (`` ` ``),
-  actual pixels (`Z`), a histogram (`H`), clipping warnings (`J`), the focus
+  actual pixels (`Z`), a histogram (`H`), clipping warnings (`W`), the focus
   point and detected faces as the camera recorded them (`A`), and the camera
   settings and film recipe (`I`), with every tag the camera wrote one click
   away.
@@ -59,6 +67,24 @@ It's a small download (a few MB).
 Brackit isn't signed by Apple or Microsoft yet, which is why the first launch
 needs that extra step.
 
+### Brackit Lite, in the browser
+
+**[Brackit Lite](https://lawrenceleejr.github.io/Brackit/lite/)** runs in a
+web browser, with nothing to install: on an iPhone or iPad (with a card
+reader), or on any computer.
+
+- **iPhone, iPad:** open Lite in Safari, tap **Choose photos**, then
+  **Browse**, your card, **Select** and **Select All**. Swipe to flip, tap a
+  look to pick it, double-tap to see it large. **Export** opens the share
+  sheet: **Save to Photos**, or **Save to Files** (RAWs go to Files). Share →
+  **Add to Home Screen** makes it open like an app, offline too.
+- **Computer:** Chrome and Edge export straight into a folder you choose;
+  other browsers save to Downloads. All the keys work.
+
+Lite reads the photos with the same code as the desktop app and never uploads
+anything. It can't change the card, so deleting the looks you didn't pick,
+ejecting and the Library are desktop-only.
+
 ### Without the app window
 
 The same program runs from a terminal and opens in your web browser:
@@ -73,12 +99,12 @@ standalone `brackit-cli-…` binaries for each system on the releases page.
 
 ## How to use it
 
-1. **Put the SD card in** and open Brackit. Click your card (or choose any
-   folder).
+1. **Put the SD card in** and open Brackit. Press the card's number (or `O`
+   to choose any folder).
 2. **Choose what to look at.** Brackit shows the card's folders and a chart of
    how many shots you took each day. If you've imported from this card
    before, *New since last import* is already selected, so just press `Enter`.
-3. **Flip with ← →** and **pick with 1, 2 or 3.** Your pick gets an orange
+3. **Flip with ← →** (or ↑ ↓, or j k) and **pick with 1, 2 or 3.** Your pick gets an orange
    outline.
 4. **Press `Space`** to see your pick full screen at full resolution;
    `1` `2` `3` switch looks there.
@@ -93,22 +119,23 @@ can eject the card and carry on later.
 
 | Key | |
 |---|---|
-| `←` `→` | previous / next set (`Shift` jumps 10) |
+| `←` `→`, `↑` `↓` or `k` `j` | previous / next set (`Shift` jumps 10) |
 | `1` `2` `3` | pick that look; `⌘`/`Ctrl` + number adds or removes a look |
 | `0` | unpick this set |
-| `Space` | inspect the pick full screen; `↑` `↓` or `1` `2` `3` switch looks |
+| `Space` | inspect the pick full screen; `1` `2` `3` switch looks |
 | `Z` | actual pixels |
 | `` ` `` | loupe (scroll to zoom) |
 | `H` | histogram |
-| `J` | clipping: red = blown highlights, blue = crushed shadows |
+| `W` | clipping warnings: red = blown highlights, blue = crushed shadows |
 | `A` | annotations: focus point and faces |
 | `I` | camera settings, film recipe, all metadata |
-| `C` | straighten and crop |
+| `C` | straighten and crop: `[` `]` straighten, arrows move, `−` `+` resize, `1`–`6` aspect (original by default), `Enter` done |
 | `G` | overview of every set |
-| `S` / `E` | show picks / export picks |
-| `L` | library of the export folder; there `0`–`5` stars, `P` flag |
+| `S` / `E` | show picks / export picks; in picks `R` adds RAW, `D` changes the folder, `X` clears unpicked looks after export |
+| `L` | library of the export folder; there `0`–`5` stars, `P` flag, `⇧1`–`5` / `⇧P` / `T` / `[` `]` filter |
 | `⌘⌫` / `Ctrl+Backspace` | delete this set from the card (undo for 10 s with `⌘Z` / `Ctrl+Z`) |
-| `O` | choose another folder, dates or card |
+| `O` | choose another folder, dates or card; there `←` `→` choose a day (`⇧` widens), `[` `]` a folder, `Enter` opens |
+| `M` | the menu (`↑` `↓` `Enter`) |
 | `⌘E` / `Ctrl+E` | eject the card |
 | `F` | full screen |
 | `?` | all keys |
@@ -141,6 +168,15 @@ npm start            # the browser version
 npm run build:cli && npm test && npm run test:ui
 ```
 
-`test:ui` checks that flipping stays under 50 ms per key press. See
+`test:ui` checks that flipping stays under 50 ms per key press, and that
+Brackit Lite reads a card exactly as the desktop app does. Lite is the same
+`web/` page plus `web/lite.js`, which answers the page's requests in the
+browser, and `jpeg.rs` compiled to WebAssembly (`lite/wasm`):
+
+```bash
+rustup target add wasm32-unknown-unknown
+npm run lite         # build Lite into build/lite and serve it
+```
+ See
 `CLAUDE.md` for notes on working on the code. Pushing a tag like `v0.1.0`
 builds every platform and publishes a release.

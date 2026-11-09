@@ -28,7 +28,7 @@ async function openLibrary() {
   if (S.solo) closeSolo();
   LIB.open = true;
   $('#library').hidden = false;
-  $('#lib-path').textContent = S.dest.replace(S.server.home, '~');
+  $('#lib-path').textContent = homeless(S.dest);
   $('#lib-path').title = S.dest;
   $('#lib-summary').textContent = 'Reading the folder…';
   $('#lib-grid').replaceChildren();
@@ -117,6 +117,14 @@ function renderLibFilters(all) {
   for (let n = 1; n <= 5; n++) chip('★'.repeat(n) + '+', f.stars === n, () => (f.stars = f.stars === n ? 0 : n), `${n} stars or more`);
   const sims = [...new Set(all.map((p) => p.filmSim).filter(Boolean))].sort();
   for (const s of sims) chip(s, f.sim === s, () => (f.sim = f.sim === s ? null : s));
+  // the same filters from the keyboard
+  const keys = el('span', 'lib-keys');
+  const k = (key, what) => keys.append(el('kbd', '', key), ` ${what}  `);
+  k('⇧P', 'flagged');
+  k('⇧1–5', 'stars');
+  k('T', 'simulation');
+  k('[ ]', 'folder');
+  box.append(keys);
 }
 
 function renderLibFolders(all) {
@@ -217,10 +225,23 @@ async function flushLibThumbs() {
     const nl = bytes.indexOf(10);
     const index = JSON.parse(new TextDecoder().decode(bytes.subarray(0, nl)));
     let off = nl + 1;
+    const got = new Set();
     for (const [id, len] of index) {
       const url = URL.createObjectURL(new Blob([bytes.subarray(off, off + len)], { type: 'image/jpeg' }));
       LIB.thumbs.set(String(id), url);
+      got.add(String(id));
       off += len;
+      const tile = document.querySelector(`.lib-tile[data-photo="${id}"]`);
+      if (tile) putLibThumb(tile, url);
+    }
+    // Cropped exports are re-encoded without an embedded thumbnail: show the
+    // file itself (only these tiles, and only once they scroll into view).
+    for (const id of ids) {
+      if (got.has(String(id))) continue;
+      const item = LIB.items.find((x) => String(x.id) === String(id));
+      if (!item || item.kind === 'video') continue;
+      const url = libUrl(id);
+      LIB.thumbs.set(String(id), url);
       const tile = document.querySelector(`.lib-tile[data-photo="${id}"]`);
       if (tile) putLibThumb(tile, url);
     }
@@ -472,6 +493,30 @@ function libraryKey(e, k) {
     return true;
   }
   if (cmd) return false;
+  // ⇧ + number / P / T / [ ]: the filters
+  const f = LIB.filter;
+  const refilter = (fn) => {
+    fn();
+    LIB.cursor = 0;
+    renderLibrary();
+    return true;
+  };
+  if (/^[0-5]$/.test(k) && e.shiftKey && !LIB.view) return refilter(() => (f.stars = Number(k) === f.stars ? 0 : Number(k)));
+  if ((k === 'P' || k === 'p') && e.shiftKey && !LIB.view) return refilter(() => (f.flag = !f.flag));
+  if ((k === 't' || k === 'T') && !LIB.view) {
+    const sims = [...new Set(libAll().map((x) => x.filmSim).filter(Boolean))].sort();
+    if (!sims.length) return true;
+    // cycle through the simulations, then back to all of them
+    const i = sims.indexOf(f.sim);
+    return refilter(() => (f.sim = i + 1 < sims.length ? sims[i + 1] : null));
+  }
+  if ((k === '[' || k === ']') && !LIB.view) {
+    const folders = [...document.querySelectorAll('#lib-folders .lib-folder')];
+    if (folders.length < 2) return true;
+    const i = Math.max(0, folders.findIndex((b) => b.classList.contains('on')));
+    folders[(i + (k === ']' ? 1 : -1) + folders.length) % folders.length].click();
+    return true;
+  }
   if (/^[0-5]$/.test(k) && p) {
     setStars(p, Number(k));
     return true;
@@ -482,8 +527,13 @@ function libraryKey(e, k) {
       if (p) toggleFlagOut(p);
       return true;
     case 'ArrowRight':
-    case 'ArrowLeft': {
-      const d = k === 'ArrowRight' ? 1 : -1;
+    case 'ArrowLeft':
+    case 'j':
+    case 'J':
+    case 'k':
+    case 'K': {
+      if (e.shiftKey && (k === 'J' || k === 'K')) return false;
+      const d = k === 'ArrowRight' || k === 'j' || k === 'J' ? 1 : -1;
       if (LIB.view) {
         const n = clamp(LIB.view.i + d, 0, LIB.items.length - 1);
         if (n !== LIB.view.i && LIB.items[n].kind !== 'video') {
@@ -494,9 +544,19 @@ function libraryKey(e, k) {
       return true;
     }
     case 'ArrowDown':
-    case 'ArrowUp':
-      if (!LIB.view) libVertical(k === 'ArrowDown' ? 1 : -1);
+    case 'ArrowUp': {
+      // the grid moves by rows; one photo at a time flips like ← →
+      const d = k === 'ArrowDown' ? 1 : -1;
+      if (!LIB.view) libVertical(d);
+      else {
+        const n = clamp(LIB.view.i + d, 0, LIB.items.length - 1);
+        if (n !== LIB.view.i && LIB.items[n].kind !== 'video') {
+          LIB.view.i = n;
+          renderLibView();
+        }
+      }
       return true;
+    }
     case ' ':
     case 'Enter':
       LIB.view ? closeLibView() : openLibView(LIB.cursor);
