@@ -1143,6 +1143,8 @@ function render() {
     }
 
     frame.onclick = () => openSolo(pos);
+    frame.dataset.photo = id; // for the loupe
+    frame.dataset.src = 'card';
     const edit = editOf(p);
     const entry = getImage(previewUrl(id), 0.1);
     let sharp = false;
@@ -1514,6 +1516,7 @@ function openSolo(pos, opts = {}) {
 
 function closeSolo() {
   clearTimeout(fullTimer);
+  clearOverlays($('#solo'));
   if (S.stageStale) requestAnimationFrame(() => !S.solo && render());
   $('#solo-info').hidden = true;
   const sh = $('#solo-hist');
@@ -1555,6 +1558,8 @@ function renderSolo() {
   const show = (node, level) => {
     if (token !== soloToken) return;
     frame.dataset.id = id;
+    frame.dataset.photo = id;
+    frame.dataset.src = 'card';
     frame.dataset.level = level;
     if (level !== 'thumb') {
       node.style.width = '';
@@ -1570,6 +1575,9 @@ function renderSolo() {
       solo.append(h);
     }
     if (S.solo.zoom && level === 'full') zoomTo(S.solo.zx ?? 0.5, S.solo.zy ?? 0.5);
+    // clipping / annotations sit over sharp pictures only (not the thumbnail)
+    if (level === 'thumb') clearOverlays(solo);
+    else requestAnimationFrame(() => token === soloToken && applyOverlays(solo, node, id, 'card', { zoomed: S.solo.zoom }));
   };
   const edit = editOf(p);
   const sharper = (level) => frame.dataset.id === id && (frame.dataset.level === 'full' || (level === 'thumb' && frame.dataset.level === 'preview'));
@@ -1643,7 +1651,20 @@ async function renderInfo() {
   if (!S.solo || set.photos[S.solo.pos] !== id) return;
   box.replaceChildren();
   for (const [k, v] of rows) box.append(el('span', 'k', k), el('span', 'v', v));
-  box.hidden = !rows.length;
+  // every tag the camera wrote, on request
+  const more = el('button', 'more', S.showAllMeta ? 'Hide all metadata' : 'All metadata');
+  more.onclick = (e) => {
+    e.stopPropagation();
+    S.showAllMeta = !S.showAllMeta;
+    renderInfo();
+  };
+  box.append(more);
+  box.hidden = false;
+  if (S.showAllMeta) {
+    const m = await photoMeta(id, 'card');
+    if (!S.solo || set.photos[S.solo.pos] !== id || !m) return;
+    box.append(metaTable(m.tags));
+  }
 }
 function toggleInfo() {
   S.showInfo = !S.showInfo;
@@ -1729,6 +1750,7 @@ function toggleZoom(e) {
     node.style.width = '';
     node.style.transform = '';
   }
+  refreshOverlays(); // overlays hide at actual pixels, return when fitted
 }
 
 /* ------------------------------------------------------------ straighten & crop editor */
@@ -2399,6 +2421,8 @@ function bindUi() {
   bindSurvey();
   $('#staged-btn').onclick = () => openStaged();
   $('#ov-btn').onclick = () => openOverview();
+  $('#lib-btn').onclick = () => (LIB.open ? closeLibrary() : openLibrary());
+  bindLibrary();
   $('#menu-btn').onclick = (e) => {
     e.stopPropagation();
     $('#menu').hidden ? openMenu() : closeMenu();
@@ -2672,6 +2696,9 @@ const MENU = [
     { id: 'fullscreen', label: 'Full screen', key: 'F', press: { key: 'f' }, on: () => isFullscreen() },
     { id: 'info', label: 'Camera settings & recipe', key: 'I', press: { key: 'i' }, when: isPhotoSet, on: () => S.showInfo },
     { id: 'histogram', label: 'Histogram', key: 'H', press: { key: 'h' }, when: inViewer, on: () => S.showHist },
+    { id: 'loupe', label: 'Loupe', key: '`', press: { key: '`', code: 'Backquote' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.loupe },
+    { id: 'clipping', label: 'Clipping (blown / crushed)', key: 'J', press: { key: 'j' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.clip },
+    { id: 'annotations', label: 'Annotations (focus, faces)', key: 'A', press: { key: 'a' }, when: () => !!S.lib || LIB.open, on: () => TOOLS.notes },
     { id: 'brackets', label: 'Brackets only', key: 'B', press: { key: 'b' }, when: inViewer, on: () => S.bracketsOnly },
   ]],
   ['Photo', [
@@ -2687,6 +2714,9 @@ const MENU = [
   ['Card', [
     { id: 'open', label: 'Choose folder, dates or card…', key: 'O', press: { key: 'o' }, when: inViewer },
     { id: 'eject', label: 'Eject card', key: '⌘E', press: { key: 'e', metaKey: true }, when: () => !!(S.lib && S.lib.volume && S.lib.volume.ejectable) },
+  ]],
+  ['Library', [
+    { id: 'library', label: 'Library of the export folder', key: 'L', press: { key: 'l' }, when: () => !!S.server, on: () => LIB.open },
   ]],
   ['Export', [
     { id: 'staged', label: 'Show picks', key: 'S', press: { key: 's' }, when: inViewer },
@@ -2756,6 +2786,9 @@ function onKey(e) {
   }
   const k = digit ? digit[1] : delKey ? 'DeleteSet' : undoKey ? 'Undo' : e.key;
 
+  // the Library takes the keys it knows; inspection tools still work there
+  if (typeof libraryKey === 'function' && libraryKey(e, k)) return e.preventDefault();
+
   if (!$('#menu').hidden && e.key === 'Escape') {
     closeMenu();
     return e.preventDefault();
@@ -2769,6 +2802,26 @@ function onKey(e) {
   if (k === '?') {
     $('#help').hidden = false;
     return;
+  }
+
+  // inspection tools work wherever a photo is on screen
+  if (!S.editor && (S.lib || LIB.open)) {
+    if (k === '`' || e.code === 'Backquote') {
+      toggleLoupe();
+      return e.preventDefault();
+    }
+    if (k === 'j' || k === 'J') {
+      toggleClipping();
+      return e.preventDefault();
+    }
+    if (k === 'a' && $('#survey').hidden) {
+      toggleNotes();
+      return e.preventDefault();
+    }
+  }
+  if (LIB.open) {
+    if (k === 'f' || k === 'F') toggleFullscreen();
+    return; // nothing else reaches the viewer behind the Library
   }
 
   if (S.editor) {
@@ -2939,6 +2992,10 @@ function onKey(e) {
     case 'h':
     case 'H':
       toggleHistogram();
+      break;
+    case 'l':
+    case 'L':
+      openLibrary();
       break;
     case 'o':
     case 'O':

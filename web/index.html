@@ -16,6 +16,7 @@
     <div class="center"><span id="counter"></span></div>
     <div class="right">
       <button id="eject-btn" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
+      <button id="lib-btn" class="link" title="Library of the export folder (L)">Library</button>
       <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
       <button id="staged-btn" class="link" title="Staged for export (S)">Staged <span id="staged-count" class="num">0</span></button>
       <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
@@ -162,6 +163,10 @@
         <dt>C</dt><dd>straighten &amp; crop (large view)</dd>
         <dt>I</dt><dd>camera settings &amp; film recipe</dd>
         <dt>H</dt><dd>histogram</dd>
+        <dt>`</dt><dd>loupe (scroll to zoom)</dd>
+        <dt>J</dt><dd>clipping: red blown, blue crushed</dd>
+        <dt>A</dt><dd>annotations: focus point, faces</dd>
+        <dt>L</dt><dd>library of the export folder (0–5 stars, P flag)</dd>
         <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
         <dt>space</dt><dd>play / pause (video)</dd>
         <dt>F</dt><dd>full screen</dd>
@@ -177,8 +182,31 @@
     </div>
   </section>
 
+  <section id="library" hidden>
+    <div class="lib-head">
+      <div>
+        <h2>Library</h2>
+        <div class="muted"><button id="lib-path" class="link dest" title="Show another folder"></button> <span id="lib-summary"></span></div>
+      </div>
+      <button id="lib-close" class="link close" title="Close (Esc or L)" aria-label="Close library">×</button>
+    </div>
+    <div id="lib-filters" class="chips"></div>
+    <div class="lib-body">
+      <nav id="lib-folders" aria-label="Folders"></nav>
+      <div id="lib-grid"></div>
+      <aside id="lib-detail" aria-label="Details"></aside>
+    </div>
+    <div id="lib-view" hidden>
+      <div id="lib-view-frame"></div>
+      <div id="lib-view-caption" class="caption"></div>
+    </div>
+  </section>
+
+  <div id="loupe" hidden aria-hidden="true"><canvas></canvas><span class="loupe-zoom"></span></div>
   <div id="menu" hidden></div>
   <div id="toast" hidden></div>
   <script src="app.js"></script>
+  <script src="tools.js"></script>
+  <script src="library.js"></script>
 </body>
 </html>

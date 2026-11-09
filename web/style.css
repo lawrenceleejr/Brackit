@@ -392,3 +392,61 @@ body.fs #peek { display: none; }
   position: absolute; right: 24px; bottom: 56px; z-index: 2; pointer-events: none;
   background: rgba(13, 13, 12, 0.72); border-radius: 3px; padding: 6px; box-sizing: content-box;
 }
+
+/* ---------- library: the export folder ---------- */
+#library { position: fixed; inset: 0; z-index: 32; background: var(--bg); display: flex; flex-direction: column; padding: calc(var(--bar-h) + 6px) 24px 0; }
+.lib-head { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 10px; }
+.lib-head h2 { font-weight: 400; font-size: 20px; margin: 0 0 2px; }
+#lib-summary { margin-left: 8px; }
+#lib-filters { padding: 8px 0 12px; border-bottom: 1px solid var(--hair); }
+.lib-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 180px 1fr 280px; gap: 20px; }
+#lib-folders { overflow-y: auto; padding: 10px 0; display: flex; flex-direction: column; }
+.lib-folder { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; color: var(--muted); text-align: left; border-radius: 2px; }
+.lib-folder .n { color: var(--faint); font-size: 11px; }
+.lib-folder:hover { color: var(--ink); }
+.lib-folder.on { color: var(--ink); background: #1a1a18; }
+#lib-grid { overflow-y: auto; padding-bottom: 60px; }
+.lib-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.lib-tile { position: relative; width: 150px; height: 100px; background: #050505; display: flex; align-items: center; justify-content: center; overflow: hidden; outline-offset: 2px; }
+.lib-tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.lib-tile.cursor { outline: 2px solid var(--ink); }
+.lib-tile.flagged::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--accent); }
+.lib-tile-meta { position: absolute; left: 4px; bottom: 5px; display: flex; gap: 4px; font-size: 10px; text-shadow: 0 0 3px #000; }
+.lib-tile-meta .stars { color: var(--ink); letter-spacing: -1px; }
+.lib-tile-meta .flag, .caption .flag { color: var(--accent); }
+.caption .stars { color: var(--ink); letter-spacing: -1px; font-size: 11px; }
+#lib-detail { overflow-y: auto; padding: 10px 0 40px; border-left: 1px solid var(--hair); padding-left: 16px; }
+.lib-d-name { font-size: 14px; }
+.lib-rate { display: flex; gap: 2px; margin: 12px 0; align-items: center; }
+.lib-rate .star { font-size: 18px; color: var(--faint); padding: 0 1px; }
+.lib-rate .star.on { color: var(--ink); }
+.lib-rate .star:hover { color: var(--muted); }
+.lib-rate .flagbtn { margin-left: 12px; font-size: 16px; color: var(--faint); }
+.lib-rate .flagbtn.on { color: var(--accent); }
+.lib-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 10px 0; font-size: 11.5px; }
+.lib-facts dt { color: var(--muted); }
+.lib-facts dd { margin: 0; color: var(--ink); word-break: break-word; }
+.lib-actions { display: flex; gap: 16px; margin: 8px 0 4px; }
+.lib-actions .link, .lib-more { border-bottom: 1px dotted var(--faint); font-size: 11.5px; }
+.meta-group { color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; margin-top: 12px; }
+.lib-empty { padding: 60px 0; color: var(--ink); }
+#lib-view { position: absolute; inset: 0; background: var(--bg); z-index: 3; display: flex; flex-direction: column; cursor: zoom-out; }
+#lib-view-frame { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; margin: 12px 12px 0; }
+#lib-view-frame img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+#lib-view-caption { justify-content: center; height: 40px; padding: 10px 0; cursor: default; }
+
+/* ---------- inspection tools ---------- */
+.tool-layer { position: absolute; pointer-events: none; z-index: 1; }
+.tool-layer > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tool-notes .af { fill: none; stroke: #f0a640; stroke-width: 2; }
+.tool-notes .face { fill: none; stroke: rgba(233, 230, 223, .85); stroke-width: 1.5; stroke-dasharray: 4 3; }
+#loupe {
+  position: fixed; z-index: 70; width: 240px; height: 240px; border-radius: 50%; overflow: hidden; pointer-events: none;
+  box-shadow: 0 0 0 1.5px rgba(233,230,223,.9), 0 10px 40px rgba(0,0,0,.6); background: #0d0d0c;
+}
+#loupe canvas { width: 100%; height: 100%; display: block; }
+#loupe .loupe-zoom { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 10.5px; color: var(--ink); background: rgba(13,13,12,.7); padding: 1px 6px; border-radius: 8px; }
+body.loupe-on .look .frame, body.loupe-on #solo-frame, body.loupe-on #lib-view-frame { cursor: none; }
+#solo-info { pointer-events: auto; max-height: calc(100vh - 140px); overflow-y: auto; }
+#solo-info .more { grid-column: 1 / -1; justify-self: start; margin-top: 6px; color: var(--muted); border-bottom: 1px dotted var(--faint); }
+#solo-info .meta-all { grid-column: 1 / -1; }
