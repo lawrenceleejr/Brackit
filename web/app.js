@@ -224,6 +224,12 @@ function drawSurveyChart() {
   };
   SV.geom = { t0, n, step, W };
   const inSel = (d) => (!SV.from || d >= SV.from) && (!SV.to || d <= SV.to);
+  if (SV.from || SV.to) {
+    // faint band marking the chosen span, including its empty days
+    const i0 = SV.from ? Math.round((parseDay(SV.from) - t0) / dayMs) : 0;
+    const i1 = SV.to ? Math.round((parseDay(SV.to) - t0) / dayMs) : n - 1;
+    mk('rect', { x: (Math.max(0, i0) * step).toFixed(2), y: 0, width: ((Math.min(n - 1, i1) - Math.max(0, i0) + 1) * step).toFixed(2), height: H, class: 'band' });
+  }
   for (const d of days) {
     const i = Math.round((parseDay(d.day) - t0) / dayMs);
     const h = Math.max(1.5, (d.n / max) * H);

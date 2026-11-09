@@ -289,3 +289,4 @@ body.fs .look .caption { opacity: .75; }
 #survey-sel { color: var(--ink); }
 #survey-status { margin-left: auto; }
 #survey-open { margin-left: 0; }
+#survey-chart .band { fill: rgba(233, 230, 223, 0.06); }
