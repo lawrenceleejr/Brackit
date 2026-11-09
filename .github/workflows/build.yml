@@ -140,7 +140,10 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          path: src
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          generate_release_notes: true
+          body_path: src/CHANGELOG.md

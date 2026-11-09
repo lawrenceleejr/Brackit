@@ -32,6 +32,26 @@ Anything slower feels sluggish.
   decoded and redrawn at display size in idle time; nothing heavy runs in
   the keydown path.
 
+## Layout
+
+- `src-tauri/src/`: `server.rs` (HTTP API), `library.rs` (scan, grouping,
+  RAW matching), `jpeg.rs` (EXIF / MakerNote / MPF parsing, metadata dump),
+  `gui.rs` (Tauri window + Mac menu bar), `main.rs` (CLI / `--serve`).
+- `web/`: `app.js` (viewer, picks, export, survey, menu), `tools.js` (loupe,
+  clipping, annotations), `library.js` (export-folder Library), plus
+  `index.html` / `style.css`. Embedded into the binary at build time.
+- `site/`: the Hugo website (deployed by `.github/workflows/pages.yml`).
+- `test/`: server tests and the UI flip-speed test.
+
+## Rules the code relies on
+
+- **The API only accepts changes from Brackit's own page.** Every non-GET
+  request must send `X-Brackit: 1` (the `api()` helper does); a foreign
+  `Origin` is refused. Keep it that way for any new endpoint.
+- **Photo ids are stable hashes** of path + size + time; never index-based.
+- **Exports write `.name.partial` and rename**; "already there" means name,
+  size and time all match.
+
 ## Conventions
 
 - The photos are the content: minimal chrome, one accent colour (amber =
