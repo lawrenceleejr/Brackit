@@ -225,10 +225,23 @@ async function flushLibThumbs() {
     const nl = bytes.indexOf(10);
     const index = JSON.parse(new TextDecoder().decode(bytes.subarray(0, nl)));
     let off = nl + 1;
+    const got = new Set();
     for (const [id, len] of index) {
       const url = URL.createObjectURL(new Blob([bytes.subarray(off, off + len)], { type: 'image/jpeg' }));
       LIB.thumbs.set(String(id), url);
+      got.add(String(id));
       off += len;
+      const tile = document.querySelector(`.lib-tile[data-photo="${id}"]`);
+      if (tile) putLibThumb(tile, url);
+    }
+    // Cropped exports are re-encoded without an embedded thumbnail: show the
+    // file itself (only these tiles, and only once they scroll into view).
+    for (const id of ids) {
+      if (got.has(String(id))) continue;
+      const item = LIB.items.find((x) => String(x.id) === String(id));
+      if (!item || item.kind === 'video') continue;
+      const url = libUrl(id);
+      LIB.thumbs.set(String(id), url);
       const tile = document.querySelector(`.lib-tile[data-photo="${id}"]`);
       if (tile) putLibThumb(tile, url);
     }

@@ -438,7 +438,10 @@ function bindSurvey() {
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
   svg.addEventListener('dblclick', () => setRange(null, null));
-  $('#survey-quick').onclick = (e) => e.target.dataset.q && quickRange(e.target.dataset.q);
+  $('#survey-quick').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b && b.dataset.q) quickRange(b.dataset.q);
+  };
   $('#survey-open').onclick = () => openScoped();
   $('#survey-back').onclick = () => {
     surveyToken++;
@@ -2720,7 +2723,10 @@ function bindUi() {
   $('#angle').oninput = (e) => setAngle(parseFloat(e.target.value));
   $('#angle').onpointerdown = () => $('#editor').classList.add('rotating');
   window.addEventListener('pointerup', () => $('#editor').classList.remove('rotating'));
-  $('#aspects').onclick = (e) => e.target.dataset.a && setAspect(e.target.dataset.a);
+  $('#aspects').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (b && b.dataset.a) setAspect(b.dataset.a);
+  };
   $('#edit-reset').onclick = () => {
     if (!S.editor) return;
     S.editor.angle = 0;
