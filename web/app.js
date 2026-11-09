@@ -193,6 +193,10 @@ function showSurvey(sv) {
   $('#welcome').hidden = true;
   $('#viewer').hidden = true;
   $('#survey').hidden = false;
+  // the photo viewer's top-bar items don't apply here
+  $('#bar .center').hidden = true;
+  $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = $('#eject-btn').hidden = true;
+  $('#folder').textContent = '';
   $('#survey-name').textContent = sv.root.split(/[\\/]/).filter(Boolean).pop() || sv.root;
   $('#survey-name').title = sv.root;
   $('#survey-status').textContent = '';
