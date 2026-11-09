@@ -918,7 +918,7 @@ function drawTicks() {
   const ink = css.getPropertyValue('--ink').trim();
   const s = TL.strength;
   const d = 3 * s; // fisheye distortion
-  const sigma = 36; // px: how wide the bulge is
+  const sigma = 48; // px: how wide the bulge is
   const geom = (i) => {
     const x0 = fisheye(i * step, TL.fx, w, d);
     const x1 = fisheye((i + 1) * step, TL.fx, w, d);
@@ -933,7 +933,7 @@ function drawTicks() {
     const flagged = set.photos.some((id) => S.flags.has(photo(id).key));
     const base = flagged ? 13 : set.kind === 'video' ? 9 : 6;
     const { x, tw, lift } = geom(i);
-    const th = base * (1 + 1.6 * lift);
+    const th = Math.min(H, base * (1 + 2.6 * lift));
     ctx.fillStyle = flagged ? accent : faint;
     ctx.globalAlpha = flagged ? 1 : 0.85 + 0.15 * lift;
     ctx.fillRect(x, H - th, tw, th);
