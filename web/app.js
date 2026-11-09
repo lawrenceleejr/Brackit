@@ -408,14 +408,20 @@ function applyFilter(keep = true) {
    photo you're looking at never waits behind prefetches. Decoded images are
    kept in a small LRU cache. */
 const MAX_INFLIGHT = 6; // browsers allow ~6 connections per host
-const AHEAD = 8; // sets to prefetch forward
+const AHEAD = 8; // sets to prefetch forward (previews)
+const THUMBS_AHEAD = 40; // sets to prefetch forward (tiny header thumbnails)
 const CACHE_MAX = 90; // decoded previews kept (~3 per set)
+const THUMB_CACHE_MAX = 900; // ~10 KB each
+// Lanes: background work may only use part of the connections, so whatever
+// is on screen (priority < 1) always finds a free slot immediately.
+const LANE = { thumb: 2, preview: 2 };
+const kindOf = (url) => (url.includes('full=1') ? 'full' : url.includes('thumb=1') ? 'thumb' : 'preview');
 const imageCache = new Map(); // url -> entry
 const queue = []; // entries waiting to start
 let inflight = 0;
 
 function makeEntry(url, priority) {
-  const entry = { url, priority, img: new Image(), done: false, started: false, ctrl: null, objectUrl: null };
+  const entry = { url, kind: kindOf(url), priority, img: new Image(), done: false, started: false, ctrl: null, objectUrl: null };
   entry.img.decoding = 'async';
   entry.img.draggable = false;
   entry.promise = new Promise((resolve) => (entry.resolve = resolve));
@@ -445,11 +451,16 @@ function evict() {
     drop(imageCache.get(u));
     imageCache.delete(u);
   }
+  let previews = 0;
+  let thumbs = 0;
+  for (const e of imageCache.values()) e.kind === 'thumb' ? thumbs++ : previews++;
   for (const [url, e] of imageCache) {
-    if (imageCache.size <= CACHE_MAX) break;
-    if (e.priority === 0 && !e.done) continue; // never drop what's on screen
+    if (previews <= CACHE_MAX && thumbs <= THUMB_CACHE_MAX) break;
+    if (e.priority < 1 && !e.done) continue; // never drop what's on screen
+    if (e.kind === 'thumb' ? thumbs <= THUMB_CACHE_MAX : previews <= CACHE_MAX) continue;
     drop(e);
     imageCache.delete(url);
+    e.kind === 'thumb' ? thumbs-- : previews--;
   }
 }
 
@@ -460,10 +471,25 @@ function drop(e) {
   if (e.objectUrl) setTimeout(() => URL.revokeObjectURL(e.objectUrl), 1000);
 }
 
+const lanes = { thumb: 0, preview: 0 }; // background requests in flight
+
+function startable(e) {
+  if (inflight >= MAX_INFLIGHT) return false;
+  if (e.priority < 1 || e.kind === 'full') return true; // on screen: always
+  return lanes[e.kind] < LANE[e.kind];
+}
+
 function pump() {
-  while (inflight < MAX_INFLIGHT && queue.length) {
-    queue.sort((a, b) => a.priority - b.priority);
-    const e = queue.shift();
+  queue.sort((a, b) => a.priority - b.priority);
+  for (let i = 0; i < queue.length && inflight < MAX_INFLIGHT; ) {
+    const e = queue[i];
+    if (!startable(e)) {
+      i++;
+      continue;
+    }
+    queue.splice(i, 1);
+    const lane = e.priority >= 1 && e.kind !== 'full' ? e.kind : null;
+    if (lane) lanes[lane]++;
     e.started = true;
     e.ctrl = new AbortController();
     inflight++;
@@ -487,6 +513,7 @@ function pump() {
       )
       .finally(() => {
         inflight--;
+        if (lane) lanes[lane]--;
         pump();
       });
   }
@@ -500,19 +527,29 @@ const photo = (id) => S.lib.photos[id];
 // Re-rank the queue around the current set; cancel what's no longer wanted.
 function preloadAround() {
   const want = new Map(); // url -> priority
-  const add = (set, pr) => {
+  const add = (set, pr, url = previewUrl) => {
     if (!set || set.kind === 'video') return;
-    set.photos.forEach((id, i) => want.set(previewUrl(id), pr + i * 0.01));
+    set.photos.forEach((id, i) => {
+      if (url === thumbUrl && !photo(id).hasThumb) return;
+      want.set(url(id), pr + i * 0.01);
+    });
   };
-  add(S.view[S.idx], 0);
-  for (let d = 1; d <= AHEAD; d++) add(S.view[S.idx + d], d);
-  add(S.view[S.idx - 1], 1.5);
-  add(S.view[S.idx - 2], AHEAD + 1);
+  // on screen: thumbnails first (instant placeholder), then the previews
+  add(S.view[S.idx], 0, thumbUrl);
+  add(S.view[S.idx], 0.1);
+  // while a key is held down, only fetch what's on screen plus thumbnails
+  const ahead = S.flipping ? 0 : AHEAD;
+  for (let d = 1; d <= ahead; d++) add(S.view[S.idx + d], d);
+  if (!S.flipping) add(S.view[S.idx - 1], 1.5);
+  for (let d = 1; d <= THUMBS_AHEAD; d++) add(S.view[S.idx + d], 1 + d * 0.5, thumbUrl);
+  for (let d = 1; d <= 5; d++) add(S.view[S.idx - d], 2 + d, thumbUrl);
   for (const [url, e] of [...imageCache]) {
     if (e.done) continue;
     if (want.has(url)) {
       e.priority = want.get(url);
-    } else if (!url.includes('full=1')) {
+    } else if (e.kind === 'thumb' && e.started) {
+      // tiny: let it finish
+    } else if (e.kind !== 'full') {
       drop(e); // stale prefetch: free the connection for what matters now
       imageCache.delete(url);
     }
@@ -547,9 +584,39 @@ function drawEdited(ctx, src, W, H, edit, scale, cropped) {
   ctx.restore();
 }
 
+/* A preview-sized canvas holding the upscaled header thumbnail, cropped to
+   the photo's true shape (Fuji thumbnails can be letterboxed) and with any
+   straighten/crop applied, so it occupies exactly the space the sharp
+   preview will. Drawn once per flip; cheap. */
+function placeholder(timg, p, edit) {
+  const a = photoAspect(p);
+  const c = document.createElement('canvas');
+  c.width = a >= 1 ? 1920 : Math.round(1920 * a);
+  c.height = Math.round(c.width / a);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'medium';
+  const tw = timg.naturalWidth;
+  const th = timg.naturalHeight;
+  let sx = 0, sy = 0, sw = tw, sh = th;
+  if (tw / th > a) {
+    sw = th * a;
+    sx = (tw - sw) / 2;
+  } else {
+    sh = tw / a;
+    sy = (th - sh) / 2;
+  }
+  ctx.drawImage(timg, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  const out = edit ? renderEdited(c, edit) : c;
+  out.classList.add('ready', 'lowres');
+  return out;
+}
+
+const srcW = (img) => img.naturalWidth || img.width;
+const srcH = (img) => img.naturalHeight || img.height;
+
 function renderEdited(img, edit, maxWidth) {
-  const W = img.naturalWidth;
-  const H = img.naturalHeight;
+  const W = srcW(img);
+  const H = srcH(img);
   const cw = edit.crop.w * W;
   const scale = maxWidth ? Math.min(1, maxWidth / cw) : 1;
   const c = document.createElement('canvas');
@@ -717,19 +784,30 @@ function render() {
     }
 
     frame.onclick = () => openSolo(pos);
-    const entry = getImage(previewUrl(id));
-    entry.promise.then((img) => {
-      if (token !== renderToken) return;
-      const edit = editOf(p);
-      let node = img;
-      if (edit) node = renderEdited(img, edit, frame.clientWidth * dpr() * 1.25);
-      if (entry.done && !node.classList.contains('ready')) {
-        // first appearance fades in; cached ones appear instantly
-        requestAnimationFrame(() => node.classList.add('ready'));
+    const edit = editOf(p);
+    const entry = getImage(previewUrl(id), 0.1);
+    let sharp = false;
+    const showPreview = (img) => {
+      if (token !== renderToken || !img.naturalWidth) return;
+      sharp = true;
+      const node = edit ? renderEdited(img, edit, frame.clientWidth * dpr() * 1.25) : img;
+      node.classList.add('ready');
+      frame.replaceChildren(node);
+    };
+    if (entry.done) showPreview(entry.img); // cached: sharp immediately
+    else {
+      // instant low-res stand-in from the JPEG header's thumbnail
+      if (p.hasThumb) {
+        const t = getImage(thumbUrl(id), 0);
+        const showThumb = (timg) => {
+          if (token !== renderToken || sharp || !timg.naturalWidth) return;
+          frame.replaceChildren(placeholder(timg, p, edit));
+        };
+        if (t.done) showThumb(t.img);
+        else t.promise.then(showThumb);
       }
-      if (edit) node.classList.add('ready');
-      frame.append(node);
-    });
+      entry.promise.then(showPreview);
+    }
   });
   S.hoverPos = null;
   drawTicks();
@@ -774,7 +852,20 @@ function go(delta) {
     // follow the pick in the new set, otherwise keep looking at the same slot
     S.solo.pos = selectedPos(set) ?? Math.min(S.solo.pos, set.photos.length - 1);
   }
-  render();
+  scheduleRender();
+}
+
+// Key repeat can outpace the screen: draw at most once per frame, always
+// the latest position, so input never queues up behind rendering.
+let renderPending = false;
+function scheduleRender() {
+  $('#counter').innerHTML = `<b>${S.idx + 1}</b> / ${S.view.length}`;
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => {
+    renderPending = false;
+    render();
+  });
 }
 
 function nextUnflagged() {
@@ -1723,7 +1814,16 @@ function bindUi() {
     }, 80);
   };
   window.addEventListener('resize', onResize);
-  document.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) S.flipping = true;
+    onKey(e);
+  });
+  document.addEventListener('keyup', (e) => {
+    if (S.flipping && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+      S.flipping = false;
+      if (S.lib && !$('#viewer').hidden) preloadAround(); // resume full prefetch
+    }
+  });
 }
 
 function onKey(e) {
