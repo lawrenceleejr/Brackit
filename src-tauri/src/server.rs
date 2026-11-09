@@ -32,6 +32,8 @@ struct State {
     edits: serde_json::Map<String, Value>,
     last_dest: Option<String>,
     last_root: Option<String>,
+    /// "name:size" of every card file ever exported (for "since last import")
+    imported: Vec<String>,
 }
 
 pub struct App {
@@ -247,6 +249,17 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
     let put = method == Method::Put;
 
     if get {
+        if let Some(id) = path.strip_prefix("/api/info/") {
+            // camera settings + film recipe, read on demand (not at scan time)
+            let file = app.lib.read().unwrap().photos.get(id).filter(|p| !p.video).map(|p| p.file.clone());
+            return match file {
+                Some(f) => {
+                    let rows: Vec<Value> = crate::jpeg::shot_info(&f).into_iter().map(|(k, v)| json!([k, v])).collect();
+                    send_json(req, 200, json!({ "rows": rows }))
+                }
+                None => err(req, 404, "not found"),
+            };
+        }
         if let Some(id) = path.strip_prefix("/api/img/") {
             let photo = app.lib.read().unwrap().photos.get(id).cloned();
             return match photo {
@@ -371,7 +384,8 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             if !p.is_dir() {
                 return err(req, 400, "Folder not found");
             }
-            let mut sv = library::survey(&p);
+            let imported: std::collections::HashSet<String> = app.state.lock().unwrap().imported.iter().cloned().collect();
+            let mut sv = library::survey(&p, &imported);
             sv["volume"] = json!(volume_of(&p));
             send_json(req, 200, sv)
         }
@@ -383,7 +397,7 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
                 return err(req, 400, "Folder not found");
             }
             let s = |k: &str| body.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
-            let scope = library::Scope { folder: s("folder"), from: s("from"), to: s("to") };
+            let scope = library::Scope { folder: s("folder"), from: s("from"), to: s("to"), after: body.get("after").and_then(Value::as_f64) };
             // leftovers from a session that quit mid-undo window: finish that delete
             let _ = fs::remove_dir_all(p.join(TRASH));
             app.progress.scanning.store(true, Ordering::SeqCst);
@@ -451,6 +465,8 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
                 (lib.root.clone(), photos)
             };
             let Some(root) = root.filter(|_| !photos.is_empty()) else { return err(req, 400, "Nothing to delete") };
+            let keep_raw = body.get("keepRaw").and_then(Value::as_bool).unwrap_or(false);
+            let photos: Vec<Photo> = if keep_raw { photos.into_iter().map(|p| Photo { raw: None, ..p }).collect() } else { photos };
             match app.deleter.remove(&root, &photos) {
                 Ok(token) => send_json(req, 200, json!({ "token": token, "undoMs": UNDO_MS })),
                 Err(e) => err(req, 500, &e),
@@ -475,7 +491,7 @@ fn summary(lib: &Library) -> Value {
         lib.photos.iter().map(|(id, p)| (id.clone(), serde_json::to_value(p.public()).unwrap_or(Value::Null))).collect();
     json!({
         "root": lib.root.as_ref().map(|r| r.to_string_lossy()),
-        "scope": { "folder": lib.scope.folder, "from": lib.scope.from, "to": lib.scope.to },
+        "scope": { "folder": lib.scope.folder, "from": lib.scope.from, "to": lib.scope.to, "after": lib.scope.after },
         "volume": volume,
         "sets": lib.sets,
         "photos": photos,
@@ -657,6 +673,7 @@ fn export(app: Arc<App>, mut req: Request) {
         let (mut copied, mut skipped) = (0, 0);
         let mut failed = Vec::new();
         let mut done_keys = Vec::new();
+        let mut imported = Vec::new();
         let total = photos.len();
         for (i, p) in photos.iter().enumerate() {
             match copy_one(p, &dest) {
@@ -666,6 +683,7 @@ fn export(app: Arc<App>, mut req: Request) {
             }
             if !p.key.is_empty() && failed.last().map_or(true, |f| f["name"] != p.name) {
                 done_keys.push(p.key.clone());
+                imported.push(format!("{}:{}", p.name, p.size));
             }
             let _ = tx.send(format!("{}\n", json!({ "done": i + 1, "total": total, "name": p.name })).into_bytes());
         }
@@ -674,6 +692,11 @@ fn export(app: Arc<App>, mut req: Request) {
             for k in done_keys {
                 if !s.exported.contains(&k) {
                     s.exported.push(k);
+                }
+            }
+            for k in imported {
+                if !s.imported.contains(&k) {
+                    s.imported.push(k);
                 }
             }
         }
@@ -728,6 +751,10 @@ fn export_edited(app: &Arc<App>, mut req: Request, params: &HashMap<String, Stri
                 s.last_dest = Some(dest.to_string_lossy().to_string());
                 if !s.exported.contains(&photo.key) {
                     s.exported.push(photo.key.clone());
+                }
+                let k = format!("{}:{}", photo.name, photo.size);
+                if !s.imported.contains(&k) {
+                    s.imported.push(k);
                 }
             }
             app.save_state();

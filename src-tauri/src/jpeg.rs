@@ -413,3 +413,261 @@ pub fn graft_segment(jpeg: &[u8], seg: Option<&[u8]>) -> Vec<u8> {
     out.extend_from_slice(&jpeg[p..]);
     out
 }
+
+/* ------------------------------------------------------------ shot info */
+
+impl<'a> Tiff<'a> {
+    /// n-th RATIONAL/SRATIONAL of an entry as f64.
+    fn ratio(&self, e: Option<Entry>, n: usize) -> Option<f64> {
+        let e = e?;
+        if !(e.typ == 5 || e.typ == 10) || n as u32 >= e.count || !self.ok(e.off + n * 8, 8) {
+            return None;
+        }
+        let (a, b) = (self.u32(e.off + n * 8), self.u32(e.off + n * 8 + 4));
+        let (a, b) = if e.typ == 10 { (a as i32 as f64, b as i32 as f64) } else { (a as f64, b as f64) };
+        if b == 0.0 { None } else { Some(a / b) }
+    }
+    /// n-th signed 32-bit value (SLONG) or 16-bit (SSHORT/SHORT) of an entry.
+    fn int(&self, e: Option<Entry>, n: usize) -> Option<i64> {
+        let e = e?;
+        match e.typ {
+            9 if (n as u32) < e.count && self.ok(e.off + n * 4, 4) => Some(self.u32(e.off + n * 4) as i32 as i64),
+            4 if (n as u32) < e.count && self.ok(e.off + n * 4, 4) => Some(self.u32(e.off + n * 4) as i64),
+            8 if (n as u32) < e.count && self.ok(e.off + n * 2, 2) => Some(self.u16(e.off + n * 2) as i16 as i64),
+            3 if (n as u32) < e.count && self.ok(e.off + n * 2, 2) => Some(self.u16(e.off + n * 2) as i64),
+            _ => None,
+        }
+    }
+}
+
+fn signed(v: f64) -> String {
+    let s = if (v - v.round()).abs() < 0.01 { format!("{}", v.round() as i64) } else { format!("{:.1}", v) };
+    if v > 0.0 { format!("+{}", s) } else { s.replace('-', "−") }
+}
+
+/// Exposure compensation the way the camera shows it: −1⅓, +⅔, +2 …
+fn ev_thirds(ev: f64) -> String {
+    let n = (ev * 3.0).round() as i64;
+    let sign = if n < 0 { "−" } else { "+" };
+    let (whole, rem) = (n.abs() / 3, n.abs() % 3);
+    let frac = ["", "⅓", "⅔"][rem as usize];
+    match (whole, rem) {
+        (0, 0) => "0".into(),
+        (0, _) => format!("{}{}", sign, frac),
+        _ => format!("{}{}{}", sign, whole, frac),
+    }
+}
+
+fn strength(v: i64) -> Option<&'static str> {
+    Some(match v {
+        0 => "Off",
+        0x20 => "Weak",
+        0x40 => "Strong",
+        _ => return None,
+    })
+}
+
+/// Camera settings and the Fujifilm "film recipe" of a shot, as
+/// (label, value) rows, for display. Only fields present are returned.
+pub fn shot_info(path: &Path) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = Vec::new();
+    let Ok(mut f) = File::open(path) else { return rows };
+    let mut buf = Vec::new();
+    if (&mut f).take(256 * 1024).read_to_end(&mut buf).is_err() || buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
+        return rows;
+    }
+    // find the EXIF segment
+    let mut p = 2;
+    let mut base = None;
+    while p + 4 <= buf.len() && buf[p] == 0xff {
+        let marker = buf[p + 1];
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let len = u16::from_be_bytes([buf[p + 2], buf[p + 3]]) as usize;
+        if marker == 0xe1 && p + 10 <= buf.len() && &buf[p + 4..p + 10] == b"Exif\0\0" {
+            base = Some(p + 10);
+            buf.truncate((p + 2 + len).min(buf.len()));
+            break;
+        }
+        p += 2 + len;
+    }
+    let Some(base) = base else { return rows };
+    let Some(t) = tiff_at(&buf, base) else { return rows };
+    let ifd0 = t.ifd(t.u32(4) as usize);
+    let model = t.text(Tiff::find(&ifd0, 0x0110));
+    let Some(exif_ptr) = t.num(Tiff::find(&ifd0, 0x8769)) else { return rows };
+    let exif = t.ifd(exif_ptr as usize);
+    let e = |tag| Tiff::find(&exif, tag);
+
+    // camera + lens
+    let lens = t.text(e(0xa434));
+    let focal = t.ratio(e(0x920a), 0);
+    let focal35 = t.num(e(0xa405));
+    let mut cam = model.unwrap_or_default();
+    if let Some(l) = lens.filter(|l| !l.is_empty()) {
+        cam = format!("{} · {}", cam, l);
+    }
+    if !cam.is_empty() {
+        rows.push(("Camera".into(), cam));
+    }
+    // exposure
+    let mut exp = Vec::new();
+    if let Some(s) = t.ratio(e(0x829a), 0) {
+        exp.push(if s >= 1.0 { format!("{}s", (s * 10.0).round() / 10.0) } else { format!("1/{}", (1.0 / s).round()) });
+    }
+    if let Some(fnum) = t.ratio(e(0x829d), 0) {
+        exp.push(format!("f/{}", (fnum * 10.0).round() / 10.0));
+    }
+    if let Some(iso) = t.num(e(0x8827)) {
+        exp.push(format!("ISO {}", iso));
+    }
+    if let Some(ev) = t.ratio(e(0x9204), 0) {
+        if ev.abs() > 0.01 {
+            exp.push(format!("{} EV", ev_thirds(ev)));
+        }
+    }
+    if !exp.is_empty() {
+        rows.push(("Exposure".into(), exp.join("  ·  ")));
+    }
+    match (focal, focal35) {
+        (Some(fl), Some(f35)) if f35 > 0 && (fl.round() as u32) != f35 => rows.push(("Focal length".into(), format!("{}mm ({}mm equiv.)", fl.round(), f35))),
+        (Some(fl), _) => rows.push(("Focal length".into(), format!("{}mm", fl.round()))),
+        _ => {}
+    }
+
+    // Fujifilm maker note: the film recipe
+    let Some(mn) = e(0x927c) else { return rows };
+    let start = base + mn.off;
+    if !t.ok(mn.off, 12) || &buf[start..start + 8] != b"FUJIFILM" {
+        return rows;
+    }
+    let m = Tiff { buf: &buf, base: start, little: true };
+    let ifd = m.ifd(m.u32(8) as usize);
+    let g = |tag| Tiff::find(&ifd, tag);
+    let film = m.num(g(0x1401));
+    let sat = m.num(g(0x1003));
+    let sim = match (sat.and_then(mono_mode), film) {
+        (Some(mono), _) => Some(mono.to_string()),
+        (None, Some(f)) => film_mode(f).map(String::from),
+        _ => None,
+    };
+    if let Some(sim) = sim {
+        rows.push(("Film simulation".into(), sim));
+    }
+    let rough = m.int(g(0x1047), 0).and_then(strength);
+    let size = m.int(g(0x104c), 0).and_then(|v| match v {
+        0 => None,
+        0x10 => Some("Small"),
+        0x20 => Some("Large"),
+        _ => None,
+    });
+    match (rough, size) {
+        (Some("Off"), _) => rows.push(("Grain".into(), "Off".into())),
+        (Some(r), Some(s)) => rows.push(("Grain".into(), format!("{}, {}", r, s))),
+        (Some(r), None) => rows.push(("Grain".into(), r.into())),
+        _ => {}
+    }
+    if let Some(v) = m.int(g(0x1048), 0).and_then(strength) {
+        rows.push(("Color Chrome".into(), v.into()));
+    }
+    if let Some(v) = m.int(g(0x104e), 0).and_then(strength) {
+        rows.push(("Color Chrome FX Blue".into(), v.into()));
+    }
+    if let Some(wb) = m.num(g(0x1002)) {
+        let name = match wb {
+            0x0 => "Auto".to_string(),
+            0x1 => "Auto (white priority)".into(),
+            0x2 => "Auto (ambience priority)".into(),
+            0x100 => "Daylight".into(),
+            0x200 => "Shade".into(),
+            0x300 | 0x301 | 0x302 | 0x303 | 0x304 => "Fluorescent".into(),
+            0x400 => "Incandescent".into(),
+            0x600 => "Underwater".into(),
+            0xf00..=0xf04 => format!("Custom {}", wb - 0xf00 + 1),
+            0xff0 => m.num(g(0x1005)).map(|k| format!("{}K", k)).unwrap_or_else(|| "Kelvin".into()),
+            _ => format!("WB {:x}", wb),
+        };
+        let shift = match (m.int(g(0x100a), 0), m.int(g(0x100a), 1)) {
+            (Some(r), Some(b)) if r != 0 || b != 0 => {
+                // stored in 1/20 steps of the camera's ±9 scale
+                format!("  ·  R{} B{}", signed(r as f64 / 20.0), signed(b as f64 / 20.0))
+            }
+            _ => String::new(),
+        };
+        rows.push(("White balance".into(), format!("{}{}", name, shift)));
+    }
+    let dr = match (m.num(g(0x1402)), m.num(g(0x1403))) {
+        (Some(0), _) => Some("Auto".to_string()),
+        (_, Some(d)) if d > 0 => Some(format!("DR{}", d)),
+        (Some(0x100), _) => Some("DR100".into()),
+        (Some(0x200), _) => Some("DR200".into()),
+        (Some(0x201), _) => Some("DR400".into()),
+        _ => None,
+    };
+    if let Some(dr) = dr {
+        rows.push(("Dynamic range".into(), dr));
+    }
+    // tone: stored as −16 × the camera's value
+    if let Some(v) = m.int(g(0x1041), 0) {
+        rows.push(("Highlight".into(), signed(-(v as f64) / 16.0)));
+    }
+    if let Some(v) = m.int(g(0x1040), 0) {
+        rows.push(("Shadow".into(), signed(-(v as f64) / 16.0)));
+    }
+    if sat.map_or(false, |s| mono_mode(s).is_none() && s != 0x8000) {
+        let c = match sat.unwrap() {
+            0x0 => Some("0"),
+            0x80 => Some("+1"),
+            0x100 => Some("+2"),
+            0xc0 => Some("+3"),
+            0xe0 => Some("+4"),
+            0x180 => Some("−1"),
+            0x400 => Some("−2"),
+            0x4c0 => Some("−3"),
+            0x4e0 => Some("−4"),
+            _ => None,
+        };
+        if let Some(c) = c {
+            rows.push(("Color".into(), c.into()));
+        }
+    }
+    if let Some(v) = m.num(g(0x1001)) {
+        let s = match v {
+            0x0 => Some("−4"),
+            0x1 => Some("−3"),
+            0x2 => Some("−2"),
+            0x82 => Some("−1"),
+            0x3 => Some("0"),
+            0x84 => Some("+1"),
+            0x4 => Some("+2"),
+            0x5 => Some("+3"),
+            0x6 => Some("+4"),
+            _ => None,
+        };
+        if let Some(s) = s {
+            rows.push(("Sharpness".into(), s.into()));
+        }
+    }
+    if let Some(v) = m.num(g(0x100e)) {
+        let s = match v {
+            0x0 => Some("0"),
+            0x180 => Some("+1"),
+            0x100 => Some("+2"),
+            0x1c0 => Some("+3"),
+            0x1e0 => Some("+4"),
+            0x280 => Some("−1"),
+            0x200 => Some("−2"),
+            0x2c0 => Some("−3"),
+            0x2e0 => Some("−4"),
+            _ => None,
+        };
+        if let Some(s) = s {
+            rows.push(("Noise reduction".into(), s.into()));
+        }
+    }
+    if let Some(v) = m.int(g(0x100f), 0) {
+        rows.push(("Clarity".into(), signed(v as f64 / 1000.0)));
+    }
+    rows
+}

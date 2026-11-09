@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { parseHeader } = require('./jpeg-reader');
-const { buildJpeg } = require('./fixture');
+const { buildJpeg, rational, slongs } = require('./fixture');
 
 const BIN = process.env.BRACKIT_BIN || path.join(__dirname, '..', 'src-tauri', 'target', 'release', process.platform === 'win32' ? 'brackit.exe' : 'brackit');
 
@@ -45,6 +45,34 @@ test.before(async () => {
   for (const [n, dt, fm, orientation, saturation] of shots) {
     fs.writeFileSync(path.join(dcim, n), buildJpeg({ dateTime: dt, filmMode: fm ?? undefined, saturation, orientation }));
   }
+  // one shot with full camera settings and a film recipe in the maker note
+  fs.writeFileSync(
+    path.join(dcim, 'DSCF0003.JPG'),
+    buildJpeg({
+      dateTime: '2026:11:01 10:00:00',
+      filmMode: 0xb00,
+      exifExtra: [
+        { tag: 0x829a, ...rational(1, 250) }, // 1/250 s
+        { tag: 0x829d, ...rational(56, 10) }, // f/5.6
+        { tag: 0x8827, type: 3, count: 1, value: 400 },
+        { tag: 0x9204, ...rational(-1, 3, true) }, // −1/3 EV
+        { tag: 0x920a, ...rational(23, 1) },
+        { tag: 0xa405, type: 3, count: 1, value: 35 },
+      ],
+      makerExtra: [
+        { tag: 0x1002, type: 3, count: 1, value: 0x100 }, // daylight
+        { tag: 0x100a, ...slongs(40, -60) }, // R+2 B−3
+        { tag: 0x1040, ...slongs(-16) }, // shadow +1
+        { tag: 0x1041, ...slongs(8) }, // highlight −0.5
+        { tag: 0x1047, ...slongs(0x20) }, // grain weak
+        { tag: 0x104c, ...slongs(0x10) }, // small
+        { tag: 0x1048, ...slongs(0x40) }, // color chrome strong
+        { tag: 0x104e, ...slongs(0x20) }, // fx blue weak
+        { tag: 0x1402, type: 3, count: 1, value: 0x200 }, // DR200
+        { tag: 0x100f, ...slongs(-2000) }, // clarity −2
+      ],
+    })
+  );
   const mov = path.join(dcim, 'DSCF0005.MOV');
   fs.writeFileSync(mov, Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 256)));
   fs.utimesSync(mov, new Date(2026, 10, 1, 10, 0, 30), new Date(2026, 10, 1, 10, 0, 30));
@@ -109,6 +137,25 @@ test('serves the small EXIF thumbnail', async () => {
   assert.equal(r.data[1], 0xd8);
   assert.equal(parseHeader(r.data).orientation, 6, 'orientation grafted on');
   assert.deepEqual([...r.data.subarray(-2)], [0xff, 0xd9]);
+});
+
+test('reads camera settings and the film recipe', async () => {
+  const r = await api('GET', `/api/info/${byName('DSCF0003.JPG').id}`);
+  const rows = Object.fromEntries(r.data.rows);
+  assert.equal(rows['Camera'], 'X100VI');
+  assert.equal(rows['Exposure'], '1/250  ·  f/5.6  ·  ISO 400  ·  −⅓ EV');
+  assert.equal(rows['Focal length'], '23mm (35mm equiv.)');
+  assert.equal(rows['Film simulation'], 'Reala Ace');
+  assert.equal(rows['Grain'], 'Weak, Small');
+  assert.equal(rows['Color Chrome'], 'Strong');
+  assert.equal(rows['Color Chrome FX Blue'], 'Weak');
+  assert.equal(rows['White balance'], 'Daylight  ·  R+2 B−3');
+  assert.equal(rows['Dynamic range'], 'DR200');
+  assert.equal(rows['Highlight'], '−0.5');
+  assert.equal(rows['Shadow'], '+1');
+  assert.equal(rows['Clarity'], '−2');
+  const plain = Object.fromEntries((await api('GET', `/api/info/${byName('DSCF0002.JPG').id}`)).data.rows);
+  assert.deepEqual(Object.keys(plain), ['Camera', 'Film simulation'], 'only fields present are shown');
 });
 
 test('streams video with byte ranges', async () => {
@@ -250,4 +297,46 @@ test('ordinary folders are not ejectable and refuse to eject', async () => {
   assert.match(r.data.error, /isn't on a removable card/);
   assert.ok(fs.existsSync(card), 'nothing happened to the folder');
   assert.ok((await api('GET', '/api/library')).data.sets.length > 0, 'library still loaded');
+});
+
+test('since last import: survey finds what is new; open can load just that', async () => {
+  const c2 = path.join(tmp, 'card2');
+  const d = path.join(c2, 'DCIM', '100_FUJI');
+  fs.mkdirSync(d, { recursive: true });
+  const t = (h) => new Date(2026, 9, 20, h, 0, 0); // 20 Oct 2026, local
+  const files = [['DSCF0201.JPG', 9], ['DSCF0202.JPG', 10], ['DSCF0203.JPG', 11], ['DSCF0204.JPG', 12]];
+  for (const [n, h] of files) {
+    const f = path.join(d, n);
+    fs.writeFileSync(f, buildJpeg({ dateTime: `2026:10:20 ${h}:00:00`, filmMode: 0x600 }));
+    fs.utimesSync(f, t(h), t(h));
+  }
+  let sv = (await api('POST', '/api/survey', { path: c2 })).data;
+  assert.equal(sv.sinceLast, null, 'nothing exported from this card yet');
+  const lib2 = (await api('POST', '/api/open', { path: c2 })).data;
+  const id = Object.values(lib2.photos).find((p) => p.name === 'DSCF0202.JPG').id;
+  await api('POST', '/api/export', { dest: path.join(tmp, 'out3'), ids: [id] });
+  sv = (await api('POST', '/api/survey', { path: c2 })).data;
+  assert.equal(sv.sinceLast.after, t(10).getTime());
+  assert.equal(sv.sinceLast.count, 2);
+  assert.equal(sv.sinceLast.firstDay, '2026-10-20');
+  const fresh = (await api('POST', '/api/open', { path: c2, after: sv.sinceLast.after })).data;
+  assert.deepEqual(Object.values(fresh.photos).map((p) => p.name).sort(), ['DSCF0203.JPG', 'DSCF0204.JPG']);
+  assert.equal(fresh.scope.after, t(10).getTime());
+});
+
+test('cleanup delete can keep the RAW', async () => {
+  const c3 = path.join(tmp, 'card3');
+  const d = path.join(c3, 'DCIM', '100_FUJI');
+  fs.mkdirSync(d, { recursive: true });
+  for (const [n, fm] of [['DSCF0301.JPG', 0x600], ['DSCF0302.JPG', 0x800], ['DSCF0303.JPG', 0xb00]]) {
+    fs.writeFileSync(path.join(d, n), buildJpeg({ dateTime: '2026:10:21 09:00:00', filmMode: fm }));
+  }
+  fs.writeFileSync(path.join(d, 'DSCF0301.RAF'), 'raw');
+  const l = (await api('POST', '/api/open', { path: c3 })).data;
+  const unpicked = l.sets[0].photos.slice(1); // keep look 1, remove looks 2 and 3
+  const r = await api('POST', '/api/delete', { ids: unpicked, keepRaw: true });
+  assert.equal(r.status, 200);
+  assert.deepEqual(fs.readdirSync(d).sort(), ['DSCF0301.JPG', 'DSCF0301.RAF']);
+  await api('POST', '/api/undo-delete', { token: r.data.token });
+  assert.equal(fs.readdirSync(d).length, 4);
 });

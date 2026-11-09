@@ -35,8 +35,8 @@ function ifd(entries, base, extraStart) {
 
 const ascii = (s) => Buffer.from(s + '\0', 'latin1');
 
-function makerNote({ filmMode, saturation }) {
-  const entries = [{ tag: 0x0000, type: 7, count: 4, value: Buffer.from('0130') }];
+function makerNote({ filmMode, saturation, makerExtra = [] }) {
+  const entries = [{ tag: 0x0000, type: 7, count: 4, value: Buffer.from('0130') }, ...makerExtra];
   if (saturation != null) entries.push({ tag: 0x1003, type: 3, count: 1, value: saturation });
   if (filmMode != null) entries.push({ tag: 0x1401, type: 3, count: 1, value: filmMode });
   const hdr = Buffer.alloc(12);
@@ -48,7 +48,7 @@ function makerNote({ filmMode, saturation }) {
 
 const FAKE_THUMB = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
-function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, model = 'X100VI', width = 7728, height = 5152, thumb = FAKE_THUMB }) {
+function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, model = 'X100VI', width = 7728, height = 5152, thumb = FAKE_THUMB, exifExtra = [], makerExtra = [] }) {
   // Layout (tiff offsets): 8 IFD0 | IFD0 extra | ExifIFD | Exif extra
   const ifd0Entries = [
     { tag: 0x010f, type: 2, count: 9, value: ascii('FUJIFILM') },
@@ -61,7 +61,7 @@ function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, mod
   const exifStart = d0.end + (d0.end % 2);
   ifd0Entries[3].value = exifStart;
   d0 = ifd(ifd0Entries, 8, 8 + ifd0Size);
-  const mn = makerNote({ filmMode, saturation });
+  const mn = makerNote({ filmMode, saturation, makerExtra });
   const exifEntries = [
     { tag: 0x9003, type: 2, count: 20, value: ascii(dateTime) },
     { tag: 0x927c, type: 7, count: mn.length, value: mn },
@@ -69,6 +69,7 @@ function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, mod
     { tag: 0xa003, type: 4, count: 1, value: height },
   ];
   if (subSec) exifEntries.push({ tag: 0x9291, type: 2, count: subSec.length + 1, value: ascii(subSec) });
+  exifEntries.push(...exifExtra);
   const exifSize = 2 + exifEntries.length * 12 + 4;
   const de = ifd(exifEntries, exifStart, exifStart + exifSize);
   const tiffHead = Buffer.from([0x49, 0x49, 0x2a, 0x00, 8, 0, 0, 0]);
@@ -134,3 +135,18 @@ function buildJpeg(meta, { image, preview, thumb } = {}) {
 }
 
 module.exports = { buildJpeg, exifApp1 };
+
+// helpers for EXIF values in tests
+const rational = (num, den, signed = false) => {
+  const b = Buffer.alloc(8);
+  signed ? b.writeInt32LE(num, 0) : b.writeUInt32LE(num, 0);
+  signed ? b.writeInt32LE(den, 4) : b.writeUInt32LE(den, 4);
+  return { type: signed ? 10 : 5, count: 1, value: b };
+};
+const slongs = (...vals) => {
+  const b = Buffer.alloc(4 * vals.length);
+  vals.forEach((v, i) => b.writeInt32LE(v, i * 4));
+  return { type: 9, count: vals.length, value: b };
+};
+module.exports.rational = rational;
+module.exports.slongs = slongs;

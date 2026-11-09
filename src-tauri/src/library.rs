@@ -125,6 +125,8 @@ pub struct Scope {
     pub folder: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    /// only files written after this time (ms since epoch): "since last import"
+    pub after: Option<f64>,
 }
 
 impl Scope {
@@ -145,14 +147,24 @@ fn local_day(ms: f64) -> String {
 /// Cheap overview of a card for choosing what to load: only directory
 /// listings and file times are read (a camera writes the file time at
 /// capture), never the photos themselves.
-pub fn survey(root: &Path) -> serde_json::Value {
+/// `imported` holds "name:size" of every card file exported before; the newest
+/// of those found on this card marks where "since last import" starts.
+pub fn survey(root: &Path, imported: &std::collections::HashSet<String>) -> serde_json::Value {
     let mut files = Vec::new();
     walk(root, 0, &mut files);
     files.retain(|f| !f.file_name().map_or(false, |n| is_raw(&n.to_string_lossy())));
     let mut groups: std::collections::BTreeMap<(String, String), (u64, u64)> = Default::default();
+    let mut times: Vec<f64> = Vec::with_capacity(files.len());
+    let mut last_imported: Option<f64> = None;
     for f in &files {
         let Ok(md) = std::fs::metadata(f) else { continue };
-        let day = local_day(mtime_ms(&md));
+        let ms = mtime_ms(&md);
+        times.push(ms);
+        let fname = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if imported.contains(&format!("{}:{}", fname, md.len())) {
+            last_imported = Some(last_imported.map_or(ms, |l: f64| l.max(ms)));
+        }
+        let day = local_day(ms);
         let folder = f.parent().and_then(|p| p.strip_prefix(root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
         let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let e = groups.entry((folder, day)).or_default();
@@ -162,7 +174,16 @@ pub fn survey(root: &Path) -> serde_json::Value {
         .into_iter()
         .map(|((folder, day), (photos, videos))| serde_json::json!({ "folder": folder, "day": day, "photos": photos, "videos": videos }))
         .collect();
-    serde_json::json!({ "root": root.to_string_lossy(), "total": files.len(), "groups": groups })
+    let since_last = last_imported.map(|after| {
+        let newer: Vec<f64> = times.iter().copied().filter(|&t| t > after).collect();
+        let first = newer.iter().copied().fold(f64::INFINITY, f64::min);
+        serde_json::json!({
+            "after": after,
+            "count": newer.len(),
+            "firstDay": if newer.is_empty() { serde_json::Value::Null } else { local_day(first).into() },
+        })
+    });
+    serde_json::json!({ "root": root.to_string_lossy(), "total": files.len(), "groups": groups, "sinceLast": since_last })
 }
 
 const SKIP: [&str; 5] = [".Trashes", ".Spotlight-V100", ".fseventsd", "node_modules", ".git"];
@@ -279,8 +300,15 @@ pub fn scan(root: &Path, scope: &Scope, progress: &Progress) -> Option<Library> 
     // RAWs aren't shown; they're attached to their set for export/delete
     let (raws, mut files): (Vec<PathBuf>, Vec<PathBuf>) =
         files.into_iter().partition(|f| f.file_name().map_or(false, |n| is_raw(&n.to_string_lossy())));
-    if scope.from.is_some() || scope.to.is_some() {
-        files.retain(|f| std::fs::metadata(f).map(|md| scope.day_ok(&local_day(mtime_ms(&md)))).unwrap_or(false));
+    if scope.from.is_some() || scope.to.is_some() || scope.after.is_some() {
+        files.retain(|f| {
+            std::fs::metadata(f)
+                .map(|md| {
+                    let ms = mtime_ms(&md);
+                    scope.day_ok(&local_day(ms)) && scope.after.map_or(true, |a| ms > a)
+                })
+                .unwrap_or(false)
+        });
     }
     files.sort();
     if !current() {
