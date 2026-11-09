@@ -640,10 +640,15 @@ function scheduleThumbs() {
   const urgent = TH.q.filter((id) => TH.waiters.has(id));
   TH.q = [...urgent, ...thumbIdsAround().filter((id) => !TH.url.has(id) && !TH.none.has(id) && !TH.loading.has(id))];
   pumpThumbs();
-  // keep the next few dozen decoded so placeholders appear synchronously
+  decodeThumbWindow();
+}
+
+// keep the next few dozen decoded so placeholders appear synchronously
+function decodeThumbWindow() {
+  if (!S.lib) return;
   for (let d = -3; d <= TH_DECODE_AHEAD; d++) {
     const set = S.view[S.idx + d];
-    if (set && set.kind !== 'video') for (const id of set.photos) if (TH.url.has(id)) thumbImage(id);
+    if (set && set.kind !== 'video') for (const id of set.photos) if (TH.url.has(id) && !TH.img.has(id)) thumbImage(id);
   }
 }
 
@@ -681,6 +686,7 @@ function pumpThumbs() {
       .finally(() => {
         TH.inflight--;
         if (gen !== TH.gen) return pumpThumbs();
+        decodeThumbWindow(); // what just arrived may be right ahead of you
         for (const id of batch) {
           TH.loading.delete(id);
           if (!TH.url.has(id)) TH.none.add(id); // no thumbnail in this file
