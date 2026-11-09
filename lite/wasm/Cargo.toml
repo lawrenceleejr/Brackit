@@ -1,0 +1,20 @@
+[package]
+name = "brackit-lite"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Brackit's JPEG/Fujifilm header reader, compiled to WebAssembly for Brackit Lite"
+
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

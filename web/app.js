@@ -23,6 +23,12 @@ const api = async (method, url, body) => {
 const dpr = () => window.devicePixelRatio || 1;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
+// Brackit Lite (the web version) answers /api in the browser; see lite.js.
+const LITE = window.BrackitLite || null;
+// Media the page loads by setting src (not fetch) go through Lite there.
+const mediaUrl = (u) => (LITE ? LITE.url(u) : u);
+const homeless = (path) => (S.server.home ? path.replace(S.server.home, '~') : path);
+
 const S = {
   server: null,
   lib: null, // {root, sets, photos}
@@ -824,14 +830,10 @@ function layoutFor(set) {
   const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
   let imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
   let lookW = (SW - gap * (n - 1)) / n;
-  if (n === 3) {
-    const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
-    const rowH = (SH - gap - 2 * CAPTION_H) / 2;
-    const twoOne = Math.min((SW - gap) / 2, rowH * a);
-    if (twoOne > inRow * 1.04) {
-      imgMax = Math.floor(rowH);
-      lookW = (SW - gap) / 2;
-    }
+  const shape = n > 1 && set.kind !== 'video' ? stageShape(SW, SH, gap, n, a) : null;
+  if (shape) {
+    imgMax = shape.imgMax;
+    lookW = shape.lookW;
   }
   return { imgMax, lookW, a };
 }
@@ -1249,7 +1251,7 @@ function render() {
     if (p.kind === 'video') {
       look.classList.add('video');
       const v = document.createElement('video');
-      v.src = previewUrl(id);
+      v.src = mediaUrl(previewUrl(id));
       v.controls = true;
       v.preload = 'metadata';
       v.playsInline = true;
@@ -1265,7 +1267,7 @@ function render() {
       return;
     }
 
-    frame.onclick = () => openSolo(pos);
+    frame.onclick = () => (lastPointer === 'touch' ? tapLook(pos) : openSolo(pos));
     frame.dataset.photo = id; // for the loupe
     frame.dataset.src = 'card';
     const edit = editOf(p);
@@ -1317,25 +1319,39 @@ function photoAspect(p) {
   if (p.orientation >= 5 && p.orientation <= 8) [w, h] = [h, w];
   return w / h;
 }
+// The arrangement that shows the photos biggest: all in a row, 2 + 1 (for
+// three), or stacked in a column (a phone held upright). Null = in a row.
+function stageShape(SW, SH, gap, n, a) {
+  const inRow = Math.min((SW - (n - 1) * gap) / n, (SH - CAPTION_H) * a);
+  const colH = (SH - (n - 1) * gap - n * CAPTION_H) / n;
+  const inCol = Math.min(SW, colH * a);
+  let best = { w: inRow, cls: null };
+  if (n === 3) {
+    const rowH = (SH - gap - 2 * CAPTION_H) / 2;
+    const twoOne = Math.min((SW - gap) / 2, rowH * a);
+    if (twoOne > best.w * 1.04) best = { w: twoOne, cls: 'g21', imgMax: Math.floor(rowH), lookW: (SW - gap) / 2 };
+  }
+  if (inCol > best.w * 1.04) best = { w: inCol, cls: 'gcol', imgMax: Math.floor(colH), lookW: SW };
+  return best.cls ? best : null;
+}
+
 function layoutStage(stage, set) {
-  stage.classList.remove('g21');
+  stage.classList.remove('g21', 'gcol');
   const SW = stage.clientWidth;
   const SH = stage.clientHeight;
   // tallest a photo may be (one row); known in px so placeholders can be sized
   S.imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
   stage.style.setProperty('--img-max', `${S.imgMax}px`);
-  if (set.photos.length !== 3 || set.kind === 'video') return;
+  if (set.photos.length < 2 || set.kind === 'video') return;
   const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
   // the shape on screen: a crop changes it
   const p0 = photo(set.photos[0]);
   const ed = editOf(p0);
   const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
-  const inRow = Math.min((SW - 2 * gap) / 3, (SH - CAPTION_H) * a);
-  const rowH = (SH - gap - 2 * CAPTION_H) / 2;
-  const twoOne = Math.min((SW - gap) / 2, rowH * a);
-  if (twoOne > inRow * 1.04) {
-    stage.classList.add('g21');
-    S.imgMax = Math.floor(rowH);
+  const shape = stageShape(SW, SH, gap, set.photos.length, a);
+  if (shape) {
+    stage.classList.add(shape.cls);
+    S.imgMax = shape.imgMax;
     stage.style.setProperty('--img-max', `${S.imgMax}px`);
   }
 }
@@ -2199,7 +2215,7 @@ async function renderStaged() {
   if (raws.size && withRaw()) parts.push(`${fmtN(raws.size)} RAW`);
   const total = bytes + (withRaw() ? rawBytes : 0);
   $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(total)}` : 'No picks yet';
-  $('#dest').textContent = S.dest.replace(S.server.home, '~');
+  $('#dest').textContent = homeless(S.dest);
   $('#dest').title = S.dest;
   const pending = items.filter((p) => !written(p)).length;
   $('#export').disabled = !pending;
@@ -2246,7 +2262,7 @@ async function renderStaged() {
     thumb._load = () => {
       if (p.kind === 'video') {
         const v = document.createElement('video');
-        v.src = previewUrl(p.id) + '#t=0.5';
+        v.src = mediaUrl(previewUrl(p.id) + '#t=0.5');
         v.preload = 'metadata';
         v.muted = true;
         thumb.append(v);
@@ -2254,7 +2270,7 @@ async function renderStaged() {
       }
       const img = new Image();
       img.decoding = 'async';
-      img.src = previewUrl(p.id);
+      img.src = mediaUrl(previewUrl(p.id));
       const edit = editOf(p);
       img.decode().then(() => thumb.append(edit ? renderEdited(img, edit, 700) : img), () => {});
     };
@@ -2293,6 +2309,7 @@ async function doExport() {
     bar.style.width = (100 * done) / total + '%';
     result.textContent = `Exporting ${done} of ${total}${name ? ' · ' + name : ''}`;
   };
+  if (LITE) return liteExport(items, bar, result);
   try {
     const plain = items.filter((p) => !editOf(p));
     const edited = items.filter((p) => editOf(p));
@@ -2349,7 +2366,7 @@ async function doExport() {
     if (skipped) bits.push(`${skipped} already there`);
     if (failed.length) bits.push(`${failed.length} failed — ${failed[0].name}: ${failed[0].error}${failed.length > 1 ? ' (and others)' : ''}`);
     result.append(el('span', '', bits.join(' · ') + ' → '));
-    const reveal = el('button', '', S.dest.replace(S.server.home, '~'));
+    const reveal = el('button', '', homeless(S.dest));
     reveal.title = 'Show in Finder';
     reveal.onclick = () => api('POST', '/api/reveal', { path: S.dest });
     result.append(reveal);
@@ -2405,7 +2422,7 @@ function renderDest(dest) {
   head.hidden = grid.hidden = false;
   const bytes = dest.files.reduce((a, f) => a + f.size, 0);
   head.append(
-    el('span', '', `Already in ${S.dest.replace(S.server.home, '~')}`),
+    el('span', '', `Already in ${homeless(S.dest)}`),
     el('span', 'muted', `${fmtN(dest.files.length)} file${dest.files.length === 1 ? '' : 's'} · ${fmtBytes(bytes)}`)
   );
   const io = stagedObserver();
@@ -2430,10 +2447,41 @@ function renderDest(dest) {
   }
 }
 
+// Brackit Lite: to a folder, the share sheet or Downloads (see lite.js).
+async function liteExport(items, bar, result) {
+  try {
+    const r = await LITE.exportPicks(items, {
+      withRaw: withRaw(),
+      bar,
+      result,
+      tick: (done, total, name) => {
+        bar.style.width = (100 * done) / total + '%';
+        result.textContent = `Preparing ${done} of ${total}${name ? ' · ' + name : ''}`;
+      },
+    });
+    if (r) {
+      bar.style.width = '100%';
+      $('#export-progress').classList.add('done');
+      const bits = [`${LITE.mode === 'share' ? 'Saved' : 'Copied'} ${r.copied}`];
+      if (r.skipped) bits.push(`${r.skipped} already there`);
+      if (r.failed.length) bits.push(`${r.failed.length} failed — ${r.failed[0].name}: ${r.failed[0].error}`);
+      result.textContent = `${bits.join(' · ')} → ${r.where}`;
+      render();
+      renderStaged();
+    }
+  } catch (e) {
+    result.textContent = 'Export failed: ' + e.message;
+  } finally {
+    exporting = false;
+    LITE.pendingShare = null;
+    $('#export').disabled = false;
+  }
+}
+
 async function exportEdited(p, edit) {
   const img = new Image();
   img.decoding = 'async';
-  img.src = fullUrl(p.id);
+  img.src = mediaUrl(fullUrl(p.id));
   await img.decode();
   const canvas = renderEdited(img, edit);
   const w = canvas.width;
@@ -2446,6 +2494,61 @@ async function exportEdited(p, edit) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'export failed');
   return data;
+}
+
+/* ------------------------------------------------------------ touch */
+
+// Phones and tablets: swipe to flip (left or up = next, like → and ↓), tap a
+// look to pick it (again to unpick), double-tap to see it large.
+let lastPointer = 'mouse';
+let swipedAt = -1e9;
+let lastTap = { pos: -1, t: -1e9 };
+
+function tapLook(pos) {
+  const now = performance.now();
+  const double = lastTap.pos === pos && now - lastTap.t < 350;
+  lastTap = { pos, t: now };
+  const set = S.view[S.idx];
+  if (!set) return;
+  if (double) return openSolo(pos);
+  const only = set.photos.filter((id) => S.flags.has(photo(id).key));
+  if (only.length === 1 && only[0] === set.photos[pos]) clearSet();
+  else selectOnly(pos);
+}
+
+function bindTouch() {
+  document.addEventListener('pointerdown', (e) => (lastPointer = e.pointerType), true);
+  let t0 = null;
+  const start = (e) => {
+    if (e.pointerType === 'touch' && e.isPrimary && !(S.solo && S.solo.zoom)) t0 = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+  };
+  const end = (e) => {
+    if (!t0 || e.pointerType !== 'touch') return;
+    const dx = e.clientX - t0.x;
+    const dy = e.clientY - t0.y;
+    const quick = e.timeStamp - t0.t < 800;
+    t0 = null;
+    if (!quick || Math.max(Math.abs(dx), Math.abs(dy)) < 40) return;
+    const d = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : -1) : dy < 0 ? 1 : -1;
+    swipedAt = performance.now();
+    go(d);
+  };
+  for (const id of ['#stage', '#solo']) {
+    $(id).addEventListener('pointerdown', start);
+    $(id).addEventListener('pointerup', end);
+    $(id).addEventListener('pointercancel', () => (t0 = null));
+  }
+  // the tap that ends a swipe isn't a click
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (performance.now() - swipedAt < 400) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    },
+    true
+  );
 }
 
 /* ------------------------------------------------------------ chrome */
@@ -2472,7 +2575,10 @@ function toast(msg, opts = {}) {
 const lastDeletes = []; // [{token, until, restore}], newest last; each undoable for a few seconds
 let lastDelete = null; // (kept in step with the newest, for the Menu)
 
+const LITE_NO = "Brackit Lite can't change the card. The desktop app can.";
+
 async function deleteSet() {
+  if (LITE) return toast(LITE_NO, { ms: 3000 });
   const set = S.view[S.idx];
   if (!set) return;
   const names = set.photos.map((id) => photo(id).name);
@@ -2519,6 +2625,7 @@ function pushDelete(d) {
 }
 
 async function undoDelete() {
+  if (LITE) return;
   while (lastDeletes.length && Date.now() > lastDeletes.at(-1).until) lastDeletes.pop();
   const d = lastDeletes.pop();
   lastDelete = lastDeletes.at(-1) || null;
@@ -2624,10 +2731,13 @@ function videoEl() {
 }
 
 function bindUi() {
-  $('#choose').onclick = async () => {
-    const p = await chooseFolder('Choose your SD card or a folder of photos', '/Volumes');
-    if (p) openFolder(p);
-  };
+  $('#choose').onclick = LITE
+    ? () => LITE.pick(LITE.canPickFolder ? 'folder' : 'files')
+    : async () => {
+        const p = await chooseFolder('Choose your SD card or a folder of photos', '/Volumes');
+        if (p) openFolder(p);
+      };
+  if (LITE) $('#lite-files').onclick = () => LITE.pick('files');
   $('#path-form').onsubmit = (e) => {
     e.preventDefault();
     const v = $('#path-input').value.trim();
@@ -2635,6 +2745,7 @@ function bindUi() {
   };
   $('#folder').onclick = () => (S.lib ? openFolder(S.lib.root) : showWelcome());
   bindSurvey();
+  bindTouch();
   $('#staged-btn').onclick = () => openStaged();
   $('#ov-btn').onclick = () => openOverview();
   $('#lib-btn').onclick = () => (LIB.open ? closeLibrary() : openLibrary());
@@ -2683,6 +2794,7 @@ function bindUi() {
     renderStaged();
   };
   $('#dest').onclick = async () => {
+    if (LITE) return LITE.chooseDest();
     const p = await chooseFolder('Export to…', S.dest);
     if (p) {
       S.dest = p;
@@ -2942,7 +3054,7 @@ const MENU = [
     { id: 'unpick', label: 'Unpick this shot', key: '0', press: { key: '0', code: 'Digit0' }, when: inViewer },
     { id: 'nextunpicked', label: 'Next unpicked shot', key: 'U', press: { key: 'u' }, when: inViewer },
     { id: 'crop', label: 'Crop & straighten…', key: 'C', press: { key: 'c' }, when: isPhotoSet },
-    { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: inViewer },
+    { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: () => inViewer() && !LITE },
     { id: 'undo', label: 'Undo delete', key: '⌘Z', press: { key: 'z', metaKey: true }, when: () => lastDeletes.some((d) => Date.now() < d.until) },
   ]],
   ['Card', [
@@ -2950,7 +3062,7 @@ const MENU = [
     { id: 'eject', label: 'Eject card', key: '⌘E', press: { key: 'e', metaKey: true }, when: () => !!(S.lib && S.lib.volume && S.lib.volume.ejectable) },
   ]],
   ['Library', [
-    { id: 'library', label: 'Library of the export folder', key: 'L', press: { key: 'l' }, when: () => !!S.server, on: () => LIB.open },
+    { id: 'library', label: 'Library of the export folder', key: 'L', press: { key: 'l' }, when: () => !!S.server && !LITE, on: () => LIB.open },
   ]],
   ['Export', [
     { id: 'staged', label: 'Show picks', key: 'S', press: { key: 's' }, when: inViewer },
@@ -3124,7 +3236,7 @@ function onKey(e) {
 
   if (!$('#staged').hidden) {
     if (k === 'Escape' || k === 's' || k === 'S') closeStaged();
-    else if (k === 'Enter' || k === 'e' || k === 'E') doExport();
+    else if (k === 'Enter' || k === 'e' || k === 'E') LITE && LITE.pendingShare ? LITE.pendingShare.click() : doExport();
     else if ((k === 'r' || k === 'R') && !$('#raw-opt').hidden) {
       $('#with-raw').checked = !$('#with-raw').checked;
       $('#with-raw').onchange();
@@ -3153,7 +3265,8 @@ function onKey(e) {
     const n = /^[1-9]$/.test(k) && document.querySelector(`#volumes .volume[data-n="${k}"]`);
     if (n) n.click();
     else if (k === 'o' || k === 'O') $('#choose').click();
-    else if (k === '/') $('#path-input').focus();
+    else if (LITE && (k === 'p' || k === 'P')) $('#lite-files').click();
+    else if (k === '/' && !LITE) $('#path-input').focus();
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -3276,7 +3389,8 @@ function onKey(e) {
       break;
     case 'l':
     case 'L':
-      openLibrary();
+      if (LITE) toast('The Library of your export folder is in the desktop app', { ms: 3000 });
+      else openLibrary();
       break;
     case 'o':
     case 'O':

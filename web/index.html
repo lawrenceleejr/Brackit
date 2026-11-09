@@ -15,8 +15,8 @@
     </div>
     <div class="center"><span id="counter"></span></div>
     <div class="right">
-      <button id="eject-btn" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject <kbd>⌘E</kbd></button>
-      <button id="lib-btn" class="link" title="Library of the export folder (L)">Library <kbd>L</kbd></button>
+      <button id="eject-btn" class="link full-only" title="Eject the card (⌘E)" hidden>⏏ Eject <kbd>⌘E</kbd></button>
+      <button id="lib-btn" class="link full-only" title="Library of the export folder (L)">Library <kbd>L</kbd></button>
       <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview <kbd>G</kbd></button>
       <button id="staged-btn" class="link" title="Your picks (S); E exports them">Picks <span id="staged-count" class="num">0</span> <kbd>S</kbd></button>
       <button id="fs-btn" class="link" title="Full screen (F)">Full screen <kbd>F</kbd></button>
@@ -27,14 +27,20 @@
 
   <main id="welcome" hidden>
     <div class="welcome-inner">
-      <h1>Brackit</h1>
+      <h1>Brackit<span class="lite-only lite-tag">Lite</span></h1>
       <p class="lede">Film-simulation brackets, side by side.<br>Made for the keyboard: every step has a key.</p>
       <p class="keyline"><kbd>←</kbd><kbd>→</kbd> or <kbd>k</kbd><kbd>j</kbd> flip <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> pick <kbd>Space</kbd> look closely <kbd>E</kbd> export <kbd>?</kbd> every key</p>
       <div id="volumes"></div>
       <div class="actions">
         <button id="choose" class="btn">Choose folder… <kbd>O</kbd></button>
+        <button id="lite-files" class="btn quiet lite-only">Choose photos… <kbd>P</kbd></button>
       </div>
-      <form id="path-form" class="path-form">
+      <div class="lite-only lite-note">
+        <p class="touch-only">Put the card in a card reader, tap <b>Choose photos</b>, then <b>Browse</b>, your card, <b>Select</b> and <b>Select All</b>.</p>
+        <p>The photos stay on this device. Nothing is uploaded.</p>
+        <p class="muted">Brackit Lite picks and exports. Deleting from the card, ejecting it and the Library of your export folder are in the <a href="https://lawrenceleejr.github.io/Brackit/#download">desktop app</a>.</p>
+      </div>
+      <form id="path-form" class="path-form full-only">
         <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Volumes/Untitled  (press / to type a path)">
         <button class="btn quiet" type="submit">Open</button>
       </form>
@@ -48,7 +54,7 @@
         <h1 id="survey-name"></h1>
         <span class="survey-head-actions">
           <button id="survey-return" class="link" title="Back to the photos you had open (Esc)" hidden>Back to photos</button>
-          <button id="survey-eject" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
+          <button id="survey-eject" class="link full-only" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
           <button id="survey-back" class="link">Other card</button>
         </span>
       </div>
@@ -146,8 +152,8 @@
     <div id="export-result" class="muted"></div>
     <div id="staged-scroll">
       <div id="staged-grid"></div>
-      <div id="dest-head"></div>
-      <div id="dest-grid"></div>
+      <div id="dest-head" class="full-only"></div>
+      <div id="dest-grid" class="full-only"></div>
     </div>
   </section>
 
@@ -188,15 +194,15 @@
           <dt class="group">Export and card</dt><dd></dd>
           <dt>S</dt><dd>your picks (there: R RAW, D folder)</dd>
           <dt>E</dt><dd>export your picks</dd>
-          <dt>⌘ ⌫</dt><dd>delete the set from the card</dd>
-          <dt>⌘ Z</dt><dd>undo the delete (10 s)</dd>
-          <dt>⌘ E</dt><dd>eject the card</dd>
+          <dt class="full-only">⌘ ⌫</dt><dd class="full-only">delete the set from the card</dd>
+          <dt class="full-only">⌘ Z</dt><dd class="full-only">undo the delete (10 s)</dd>
+          <dt class="full-only">⌘ E</dt><dd class="full-only">eject the card</dd>
           <dt>O</dt><dd>another folder, other days, other card</dd>
-          <dt class="group">Library</dt><dd></dd>
-          <dt>L</dt><dd>library of the export folder</dd>
-          <dt>0 – 5  P</dt><dd>stars, flag</dd>
-          <dt>[ ]  T</dt><dd>folder, film simulation</dd>
-          <dt>⇧ 0 – 5  ⇧ P</dt><dd>show rated, show flagged</dd>
+          <dt class="group full-only">Library</dt><dd class="full-only"></dd>
+          <dt class="full-only">L</dt><dd class="full-only">library of the export folder</dd>
+          <dt class="full-only">0 – 5  P</dt><dd class="full-only">stars, flag</dd>
+          <dt class="full-only">[ ]  T</dt><dd class="full-only">folder, film simulation</dd>
+          <dt class="full-only">⇧ 0 – 5  ⇧ P</dt><dd class="full-only">show rated, show flagged</dd>
           <dt class="group">Anywhere</dt><dd></dd>
           <dt>M</dt><dd>menu (↑ ↓ ↵)</dd>
           <dt>F</dt><dd>full screen</dd>

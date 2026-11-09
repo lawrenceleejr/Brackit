@@ -2,3 +2,5 @@ node_modules/
 dist/
 .DS_Store
 *.log
+lite/wasm/target/
+build/lite/

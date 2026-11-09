@@ -28,7 +28,7 @@ async function openLibrary() {
   if (S.solo) closeSolo();
   LIB.open = true;
   $('#library').hidden = false;
-  $('#lib-path').textContent = S.dest.replace(S.server.home, '~');
+  $('#lib-path').textContent = homeless(S.dest);
   $('#lib-path').title = S.dest;
   $('#lib-summary').textContent = 'Reading the folder…';
   $('#lib-grid').replaceChildren();

@@ -316,6 +316,84 @@ pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
     Ok(out)
 }
 
+/// The first `n` bytes of a file: enough for every header segment (APP
+/// segments are at most 64 KB each).
+fn head(path: &Path, n: u64) -> Option<Vec<u8>> {
+    let mut f = File::open(path).ok()?;
+    let mut buf = Vec::new();
+    (&mut f).take(n).read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// `read_meta` for a file already in memory (Brackit Lite reads the start of
+/// each file in the browser). Returns the metadata and, if the header runs
+/// past the end of `buf`, how many bytes from the start are needed to finish
+/// (0 when `buf` was enough). Offsets are absolute, as from `read_meta`.
+#[allow(dead_code)] // the desktop reads files directly; Brackit Lite (lite/wasm) uses this
+pub fn meta_from_buf(buf: &[u8]) -> (Meta, usize) {
+    let mut out = Meta { orientation: 1, ..Default::default() };
+    if buf.len() < 2 || buf[0] != 0xff || buf[1] != 0xd8 {
+        return (out, 0);
+    }
+    let mut pos: usize = 2;
+    for _ in 0..64 {
+        if pos + 4 > buf.len() {
+            return (out, pos + 4);
+        }
+        if buf[pos] != 0xff {
+            break;
+        }
+        let marker = buf[pos + 1];
+        if marker == 0xff {
+            pos += 1;
+            continue;
+        }
+        if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
+            pos += 2;
+            continue;
+        }
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let seg_len = 2 + u16::from_be_bytes([buf[pos + 2], buf[pos + 3]]) as usize;
+        let wanted = match marker {
+            0xe1 | 0xe2 => pos + seg_len,
+            0xc0..=0xc2 => pos + 9,
+            _ => 0,
+        };
+        if wanted > buf.len() {
+            return (out, wanted);
+        }
+        match marker {
+            0xe1 => {
+                let seg = &buf[pos..pos + seg_len];
+                if seg.len() >= 10 && &seg[4..10] == b"Exif\0\0" {
+                    let mut m = Meta { orientation: 1, ..Default::default() };
+                    parse_exif(seg, 10, &mut m);
+                    m.thumb = m.thumb.map(|(s, l)| (s + pos as u64, l));
+                    let (preview, frame_w, frame_h) = (out.preview, out.frame_width, out.frame_height);
+                    out = Meta { preview, frame_width: frame_w, frame_height: frame_h, ..m };
+                }
+            }
+            0xe2 => {
+                let seg = &buf[pos..pos + seg_len];
+                if seg.len() >= 8 && &seg[4..8] == b"MPF\0" {
+                    let mut m = Meta::default();
+                    parse_mpf(seg, 8, &mut m);
+                    out.preview = m.preview.map(|(s, l)| (s + pos as u64, l));
+                }
+            }
+            0xc0..=0xc2 => {
+                out.frame_height = Some(u16::from_be_bytes([buf[pos + 5], buf[pos + 6]]) as u32);
+                out.frame_width = Some(u16::from_be_bytes([buf[pos + 7], buf[pos + 8]]) as u32);
+            }
+            _ => {}
+        }
+        pos += seg_len;
+    }
+    (out, 0)
+}
+
 /// Check the MPF range really begins with a JPEG SOI marker.
 pub fn valid_preview(path: &Path, start: u64) -> bool {
     let Ok(mut f) = File::open(path) else { return false };
@@ -345,9 +423,11 @@ pub fn orientation_segment(orientation: u16) -> Vec<u8> {
 /// image: Orientation -> 1, pixel size updated, stale IFD1 thumbnail unlinked.
 /// The MakerNote (film simulation etc.) is kept.
 pub fn exif_for_edited(path: &Path, width: u32, height: u32) -> Option<Vec<u8>> {
-    let mut f = File::open(path).ok()?;
-    let mut buf = Vec::new();
-    (&mut f).take(256 * 1024).read_to_end(&mut buf).ok()?;
+    exif_for_edited_buf(&head(path, 256 * 1024)?, width, height)
+}
+
+/// `exif_for_edited` for the start of a file already in memory.
+pub fn exif_for_edited_buf(buf: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     if buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
         return None;
     }
@@ -486,10 +566,14 @@ fn strength(v: i64) -> Option<&'static str> {
 /// Camera settings and the Fujifilm "film recipe" of a shot, as
 /// (label, value) rows, for display. Only fields present are returned.
 pub fn shot_info(path: &Path) -> Vec<(String, String)> {
+    head(path, 256 * 1024).map(|b| shot_info_buf(&b)).unwrap_or_default()
+}
+
+/// `shot_info` for the start of a file already in memory.
+pub fn shot_info_buf(buf: &[u8]) -> Vec<(String, String)> {
     let mut rows: Vec<(String, String)> = Vec::new();
-    let Ok(mut f) = File::open(path) else { return rows };
-    let mut buf = Vec::new();
-    if (&mut f).take(256 * 1024).read_to_end(&mut buf).is_err() || buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
+    let mut buf = buf.to_vec();
+    if buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
         return rows;
     }
     // find the EXIF segment
@@ -945,11 +1029,18 @@ use serde_json::Value;
 /// the spatial ones as numbers for drawing: the focus point and detected
 /// faces, in full-image pixels (before orientation is applied).
 pub fn all_metadata(path: &Path) -> Value {
+    match head(path, 256 * 1024) {
+        Some(b) => all_metadata_buf(&b),
+        None => all_metadata_buf(&[]),
+    }
+}
+
+/// `all_metadata` for the start of a file already in memory.
+pub fn all_metadata_buf(buf: &[u8]) -> Value {
     let mut tags: Vec<Value> = Vec::new();
     let mut out = serde_json::json!({ "tags": [], "focus": null, "faces": [], "width": null, "height": null, "orientation": 1 });
-    let Ok(mut f) = File::open(path) else { return out };
-    let mut buf = Vec::new();
-    if (&mut f).take(256 * 1024).read_to_end(&mut buf).is_err() || buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
+    let mut buf = buf.to_vec();
+    if buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
         return out;
     }
     let mut p = 2;

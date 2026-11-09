@@ -521,3 +521,41 @@ body.fs #key-hint { display: none; }
 .editor-mid { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .edit-keys { margin: 0; color: var(--tick); }
 .editor-actions { align-items: center; }
+
+/* ---------- Brackit Lite (the web version) and touch ---------- */
+body:not(.lite) .lite-only, body.lite .full-only, body:not(.touch) .touch-only { display: none !important; }
+.lite-tag {
+  margin-left: 12px; padding: 2px 7px 1px; vertical-align: 6px;
+  font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--faint); border-radius: 3px;
+}
+.actions .btn + .btn { margin-left: 8px; }
+.lite-note { margin-top: 18px; }
+.lite-note p { color: var(--muted); margin: 0 0 10px; line-height: 1.5; font-size: 13px; }
+.lite-note b { color: var(--ink); font-weight: 500; }
+.lite-note a { color: var(--ink); }
+.share-now { margin-right: 4px; }
+
+/* phones held upright: the looks stacked */
+#stage.gcol { flex-direction: column; justify-content: center; row-gap: var(--gap); }
+#stage.gcol .look { flex: 0 0 auto; }
+
+/* touch: swipes are ours; pinch still zooms; actual pixels pans */
+body.touch #stage, body.touch #solo { touch-action: pinch-zoom; }
+body.touch #solo.zoom #solo-frame { touch-action: pan-x pan-y pinch-zoom; }
+body.touch kbd { display: none; }
+body.touch .look .frame { cursor: pointer; }
+
+@media (max-width: 700px) {
+  #bar { padding: 0 10px; }
+  #bar .left, #bar .right { gap: 14px; }
+  #bar kbd, #ov-btn, #fs-btn, #help-btn, #folder { display: none !important; }
+  #stage { left: 8px; right: 8px; }
+  #index { left: 10px; right: 10px; }
+  #set-files { display: none; }
+  #key-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .staged-head { flex-wrap: wrap; gap: 12px; }
+  .staged-actions { flex-wrap: wrap; gap: 10px; }
+  .survey-head { flex-wrap: wrap; gap: 8px; }
+  .survey-label .quick { flex-wrap: wrap; }
+}
