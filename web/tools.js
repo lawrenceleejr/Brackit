@@ -83,7 +83,8 @@ function drawLoupe(ev) {
   lp.style.left = `${ev.x - LOUPE_D / 2}px`;
   lp.style.top = `${ev.y - LOUPE_D / 2}px`;
   const p = t.src === 'out' ? S.out && S.out.photos[t.id] : S.lib && S.lib.photos[t.id];
-  const edit = t.src === 'card' && p ? editOf(p) : null;
+  // (inside a CSS crop view the image under the cursor is the whole picture)
+  const edit = t.src === 'card' && p && !t.node.closest('.crop-view') ? editOf(p) : null;
   // map to the original: through the crop rectangle (rotation ignored)
   let ux = fx;
   let uy = fy;

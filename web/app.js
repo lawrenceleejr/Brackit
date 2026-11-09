@@ -12,7 +12,8 @@ const el = (tag, cls, text) => {
 const api = async (method, url, body) => {
   const r = await fetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    // the server only accepts changes from its own page (see server.rs handle)
+    headers: { 'X-Brackit': '1', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await r.json().catch(() => ({}));
@@ -72,6 +73,7 @@ async function showWelcome() {
   $('#bar .center').hidden = true;
   $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = $('#eject-btn').hidden = true;
   $('#folder').textContent = '';
+  $('#folder').hidden = true;
   const box = $('#volumes');
   box.innerHTML = '';
   const { volumes } = await api('GET', '/api/volumes').catch(() => ({ volumes: [] }));
@@ -80,20 +82,20 @@ async function showWelcome() {
     entries.push({ name: S.server.lastRoot.split('/').filter(Boolean).pop() || '/', path: S.server.lastRoot, where: 'last opened' });
   }
   for (const v of entries) {
+    const row = el('div', 'volume-row');
     const b = el('button', 'volume');
     const where = el('span', 'where', v.where === 'card' ? v.path : v.where);
     b.append(el('span', 'name', v.name), where);
     b.onclick = () => openFolder(v.path);
+    row.append(b);
     if (v.ejectable) {
-      const ej = el('span', 'eject', '⏏');
+      const ej = el('button', 'eject', '⏏');
       ej.title = `Eject ${v.name}`;
-      ej.onclick = (e) => {
-        e.stopPropagation();
-        ejectCard(v.path, v.name);
-      };
-      where.append(ej);
+      ej.setAttribute('aria-label', `Eject ${v.name}`);
+      ej.onclick = () => ejectCard(v.path, v.name);
+      row.append(ej);
     }
-    box.append(b);
+    box.append(row);
   }
   $('#path-input').value = '';
 }
@@ -174,8 +176,16 @@ function niceDay(d, withYear = true) {
 }
 const fmtN = (n) => n.toLocaleString('en-US');
 
+// From the card screen, return to the photos already loaded (nothing rescans).
+function backToPhotos() {
+  if (!S.lib) return;
+  surveyToken++;
+  loadLibrary(S.lib);
+}
+
 function showSurvey(sv) {
   SV.data = sv;
+  $('#survey-return').hidden = !S.lib;
   SV.folder = '';
   SV.from = SV.to = null;
   SV.after = null;
@@ -198,6 +208,7 @@ function showSurvey(sv) {
   $('#bar .center').hidden = true;
   $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = $('#eject-btn').hidden = true;
   $('#folder').textContent = '';
+  $('#folder').hidden = true;
   $('#survey-name').textContent = sv.root.split(/[\\/]/).filter(Boolean).pop() || sv.root;
   $('#survey-name').title = sv.root;
   $('#survey-status').textContent = '';
@@ -401,6 +412,7 @@ function bindSurvey() {
     $('#survey').hidden = true;
     showWelcome();
   };
+  $('#survey-return').onclick = () => backToPhotos();
 }
 
 let openToken = 0;
@@ -453,7 +465,13 @@ function scopeLabel(lib) {
 
 function loadLibrary(lib) {
   S.lib = lib;
+  for (const e of imageCache.values()) drop(e); // abort old downloads, free object URLs
   imageCache.clear();
+  queue.length = 0;
+  DISP.clear();
+  infoCache.clear();
+  if (typeof metaCache !== 'undefined') metaCache.clear();
+  lastDeletes.length = 0; // undo applies to the library it was made in
   resetThumbs();
   applyFilter(false);
   let saved = 0;
@@ -468,6 +486,7 @@ function loadLibrary(lib) {
   $('#staged-btn').hidden = $('#fs-btn').hidden = $('#ov-btn').hidden = false;
   $('#eject-btn').hidden = !(lib.volume && lib.volume.ejectable);
   $('#folder').textContent = scopeLabel(lib);
+  $('#folder').hidden = false;
   $('#folder').title = lib.root + ' — choose another card, folder or dates (O)';
   render();
   updateFlagsUi();
@@ -476,6 +495,7 @@ function loadLibrary(lib) {
 const idxKey = () => 'brackit:idx:' + S.lib.root + '|' + JSON.stringify(S.lib.scope || {});
 
 function applyFilter(keep = true) {
+  ticksChanged();
   const current = keep ? S.view[S.idx] : null;
   const all = S.lib ? S.lib.sets : [];
   S.view = S.bracketsOnly ? all.filter((s) => s.photos.length > 1) : all;
@@ -779,21 +799,22 @@ function layoutFor(set) {
   return { imgMax, lookW, a };
 }
 
-function dispKey(set) {
+function dispKey(set, id) {
   const { imgMax, lookW } = layoutFor(set);
-  return `${Math.round(lookW)}x${imgMax}@${dpr()}`;
+  const ed = id ? editOf(photo(id)) : null;
+  return `${Math.round(lookW)}x${imgMax}@${dpr()}${ed ? JSON.stringify(ed) : ''}`;
 }
 
-function displayCopy(url, set) {
+function displayCopy(url, set, id) {
   const d = DISP.get(url);
-  return d && d.key === dispKey(set) ? d.canvas : null;
+  return d && d.key === dispKey(set, id) ? d.canvas : null;
 }
 
 function queueDisplayCopies() {
   dispQueue = [];
   for (let d = 0; d <= AHEAD; d++) {
     const set = S.view[S.idx + d];
-    if (set && set.kind !== 'video') for (const id of set.photos) if (!editOf(photo(id))) dispQueue.push({ id, set });
+    if (set && set.kind !== 'video') for (const id of set.photos) dispQueue.push({ id, set });
   }
   scheduleDisplayCopy();
 }
@@ -813,12 +834,22 @@ function makeDisplayCopy() {
     const { id, set } = dispQueue.shift();
     const url = previewUrl(id);
     const e = imageCache.get(url);
-    if (!e || !e.done || !e.img.naturalWidth || displayCopy(url, set)) continue;
+    if (!e || !e.done || !e.img.naturalWidth || displayCopy(url, set, id)) continue;
     const { imgMax, lookW, a } = layoutFor(set);
     const w = Math.min(lookW, imgMax * a);
     const cw = Math.max(1, Math.round(w * dpr()));
     const ch = Math.max(1, Math.round((w / a) * dpr()));
-    const key = dispKey(set);
+    const key = dispKey(set, id);
+    const edit = editOf(photo(id));
+    if (edit) {
+      // cropped: render the crop once, at display size, in this idle moment
+      const c = renderEdited(e.img, edit, cw);
+      c.className = 'ready';
+      DISP.set(url, { canvas: c, key });
+      while (DISP.size > DISP_MAX) DISP.delete(DISP.keys().next().value);
+      if (dispQueue.length) scheduleDisplayCopy();
+      return;
+    }
     const store = (c) => {
       c.className = 'ready';
       DISP.set(url, { canvas: c, key });
@@ -927,10 +958,62 @@ function placeholderImg(timg, p, frame) {
   return im;
 }
 
+/* A crop shown without redrawing: the decoded image sits inside a clipped
+   box, positioned, rotated and scaled with CSS (composited by the GPU, so
+   flipping onto cropped photos is as cheap as onto plain ones). Mirrors
+   drawEdited(): rotate about the centre, scale to cover, then crop. */
+// `src` is the decoded image (for its size); a copy of it is placed in the box
+// (a fresh copy reports 0×0 until it has loaded, so never measure the copy).
+function cropView(src, p, edit, boxW, maxH) {
+  const W = srcW(src) || 1;
+  const H = srcH(src) || 1;
+  const img = src.cloneNode();
+  const a = (W * edit.crop.w) / (H * edit.crop.h);
+  const w = Math.max(1, Math.min(boxW || 600, (maxH || 600) * a));
+  const h = w / a;
+  const s = w / (edit.crop.w * W); // screen px per image px
+  const box = el('div', 'crop-view ready');
+  box.style.width = `${Math.round(w)}px`;
+  box.style.height = `${Math.round(h)}px`;
+  const inner = el('div', 'crop-frame');
+  Object.assign(inner.style, { left: `${-edit.crop.x * W * s}px`, top: `${-edit.crop.y * H * s}px`, width: `${W * s}px`, height: `${H * s}px` });
+  img.classList.add('ready');
+  img.style.transform = `rotate(${edit.angle}deg) scale(${coverScale(W, H, edit.angle)})`;
+  inner.append(img);
+  box.append(inner);
+  return box;
+}
+
+// Give a stand-in the exact size the sharp picture will have.
+function sizeToFrame(node, frame, a, maxH) {
+  const w = Math.max(1, Math.min(frame.clientWidth || 600, (maxH || frame.clientHeight || 600) * a));
+  node.style.width = `${Math.round(w)}px`;
+  node.style.height = `${Math.round(w / a)}px`;
+  return node;
+}
+
+const placeholderCache = new Map(); // `${id}:${crop}` -> canvas
 function placeholder(timg, p, edit) {
+  const pk = `${p.id}:${JSON.stringify(edit)}`;
+  const hit = placeholderCache.get(pk);
+  if (hit) return hit.cloneNode ? cloneCanvas(hit) : hit;
+  const made = makePlaceholder(timg, p, edit);
+  placeholderCache.set(pk, made);
+  while (placeholderCache.size > 120) placeholderCache.delete(placeholderCache.keys().next().value);
+  return cloneCanvas(made);
+}
+function cloneCanvas(c) {
+  const d = document.createElement('canvas');
+  d.width = c.width;
+  d.height = c.height;
+  d.className = c.className;
+  d.getContext('2d').drawImage(c, 0, 0);
+  return d;
+}
+function makePlaceholder(timg, p, edit) {
   const a = photoAspect(p);
   const c = document.createElement('canvas');
-  c.width = a >= 1 ? 1920 : Math.round(1920 * a);
+  c.width = a >= 1 ? 640 : Math.round(640 * a);
   c.height = Math.round(c.width / a);
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'medium';
@@ -1037,6 +1120,7 @@ function updateFlagsUi() {
     });
     if (S.solo) renderSoloCaption();
   }
+  ticksChanged();
   const n = stagedPhotos().length;
   $('#staged-count').textContent = n;
   $('#staged-btn').classList.toggle('has', n > 0);
@@ -1058,7 +1142,7 @@ const fmtDur = (s) => (isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(
 function caption(p, pos, count) {
   const c = el('div', 'caption');
   const key = el('span', 'key', String(pos + 1));
-  key.title = `Flag for export (${pos + 1})`;
+  key.title = `Pick this look (${pos + 1}); click to add or remove it`;
   key.onclick = (e) => {
     e.stopPropagation();
     toggleFlag(pos);
@@ -1151,7 +1235,7 @@ function render() {
     const showPreview = (img) => {
       if (token !== renderToken || !img.naturalWidth) return;
       sharp = true;
-      const node = edit ? renderEdited(img, edit, frame.clientWidth * dpr() * 1.25) : displayCopy(previewUrl(id), set) || img;
+      const node = displayCopy(previewUrl(id), set, id) || (edit ? cropView(img, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax) : img);
       node.classList.add('ready');
       frame.replaceChildren(node);
       if (S.showHist) {
@@ -1167,7 +1251,11 @@ function render() {
       // already decoded, so it's on screen in this same frame)
       const showThumb = (timg) => {
         if (token !== renderToken || sharp || !timg || !timg.naturalWidth) return;
-        frame.replaceChildren(edit ? placeholder(timg, p, edit) : placeholderImg(timg, p, frame));
+        if (edit) {
+          const v = cropView(timg, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax);
+          v.classList.add('lowres');
+          frame.replaceChildren(v);
+        } else frame.replaceChildren(placeholderImg(timg, p, frame));
       };
       const ready = thumbReady(id);
       if (ready) showThumb(ready);
@@ -1293,6 +1381,42 @@ function drawTicks() {
   ctx.clearRect(0, 0, w, H);
   const n = S.view.length;
   if (!n) return;
+  // At rest the strip only changes when picks, the filter or the size do:
+  // draw it once off-screen and, per key press, just copy it and add the cursor.
+  if (TL.strength === 0 && TL.target === 0) {
+    const key = `${w}|${n}|${dpr()}|${TL.version}|${S.view[0] && S.view[0].index}`;
+    if (!TL.base || TL.baseKey !== key) {
+      TL.base = document.createElement('canvas');
+      TL.base.width = c.width;
+      TL.base.height = c.height;
+      const bctx = TL.base.getContext('2d');
+      bctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+      paintTicks(bctx, w, H, n, false);
+      TL.baseKey = key;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(TL.base, 0, 0);
+    ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+    paintCursor(ctx, w, H, n);
+    return;
+  }
+  paintTicks(ctx, w, H, n, true);
+}
+
+// picks changed: the cached strip must be redrawn
+function ticksChanged() {
+  TL.version = (TL.version || 0) + 1;
+}
+
+function paintCursor(ctx, w, H, n) {
+  const step = w / n;
+  const tw = Math.max(1, Math.min(2, step - 1));
+  const x = S.idx * step + step / 2 - Math.max(tw, 1.5) / 2;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
+  ctx.fillRect(x, H - TICK_H, Math.max(tw, 1.5), TICK_H);
+}
+
+function paintTicks(ctx, w, H, n, withCursor) {
   const step = w / n;
   const css = getComputedStyle(document.documentElement);
   const faint = css.getPropertyValue('--tick').trim();
@@ -1321,13 +1445,20 @@ function drawTicks() {
     ctx.fillRect(x, H - th, tw, th);
   }
   ctx.globalAlpha = 1;
+  if (!withCursor) return;
   // the current set: a full-height ink line (taller when bulged)
   const cur = geom(S.idx);
   ctx.fillStyle = ink;
   ctx.fillRect(cur.x, H - TICK_H * (1 + 0.9 * cur.lift), Math.max(cur.tw, 1.5), TICK_H * (1 + 0.9 * cur.lift));
 }
 
+const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 function animateTimeline() {
+  if (reduceMotion) {
+    TL.strength = TL.target;
+    TL.fx = TL.mx;
+    return drawTicks();
+  }
   if (TL.raf) return;
   const tick = () => {
     TL.strength += (TL.target - TL.strength) * 0.22;
@@ -1587,14 +1718,14 @@ function renderSolo() {
   const showPreview = (img) => {
     if (token !== soloToken || !img || !img.naturalWidth || sharper('preview')) return;
     // the decoded preview element itself (a copy could be decoded again)
-    show(edit ? renderEdited(img, edit, frame.clientWidth * dpr()) : img, 'preview');
+    show(edit ? cropView(img, p, edit, frame.clientWidth, frame.clientHeight) : img, 'preview');
   };
   if (pre.done) showPreview(pre.img);
   else {
     const showThumb = (timg) => {
       if (token !== soloToken || !timg || !timg.naturalWidth || sharper('thumb')) return;
       let node;
-      if (edit) node = placeholder(timg, p, edit);
+      if (edit) node = cropView(timg, p, edit, frame.clientWidth, frame.clientHeight);
       else {
         const a = photoAspect(p);
         const w = Math.min(frame.clientWidth, frame.clientHeight * a);
@@ -1969,15 +2100,20 @@ function rawsOf(items) {
 let destToken = 0;
 async function renderStaged() {
   const token = ++destToken;
+  stagedIOs.forEach((io) => io.disconnect());
+  stagedIOs = [];
   // what's already in the export folder (also tells us which picks are there)
   const dest = await api('GET', `/api/dest?path=${encodeURIComponent(S.dest)}`).catch(() => ({ files: [] }));
   if (token !== destToken) return;
-  const there = new Set(dest.files.map((f) => `${f.name}:${f.size}`));
+  // same rule as the server: name, size and time (±2 s) must all match
+  const byName = new Map();
+  for (const f of dest.files) byName.set(f.name, [...(byName.get(f.name) || []), f]);
+  const inFolder = (name, size, mtime) => (byName.get(name) || []).some((f) => f.size === size && (mtime == null || Math.abs(f.mtime - mtime) <= 2000));
   const names = new Set(dest.files.map((f) => f.name));
   // already written: an identical file is in the folder (cropped exports
   // differ in size, so for those: exported before and the name is there)
-  const jpegWritten = (p) => (editOf(p) ? S.exported.has(p.key) && names.has(p.name) : there.has(`${p.name}:${p.size}`));
-  const rawWritten = (p) => !withRaw() || !p.rawName || there.has(`${p.rawName}:${p.rawSize}`);
+  const jpegWritten = (p) => (editOf(p) ? S.exported.has(p.key) && names.has(p.name) : inFolder(p.name, p.size, p.mtime));
+  const rawWritten = (p) => !withRaw() || !p.rawName || inFolder(p.rawName, p.rawSize);
   const written = (p) => jpegWritten(p) && rawWritten(p);
   const items = stagedPhotos();
   const grid = $('#staged-grid');
@@ -1996,7 +2132,7 @@ async function renderStaged() {
   $('#raw-count').textContent = raws.size ? `(${fmtN(raws.size)})` : '';
   if (raws.size && withRaw()) parts.push(`${fmtN(raws.size)} RAW`);
   const total = bytes + (withRaw() ? rawBytes : 0);
-  $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(total)}` : 'Nothing staged yet';
+  $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(total)}` : 'No picks yet';
   $('#dest').textContent = S.dest.replace(S.server.home, '~');
   $('#dest').title = S.dest;
   const pending = items.filter((p) => !written(p)).length;
@@ -2064,7 +2200,7 @@ async function renderStaged() {
 // E: export everything staged, showing the staged view so progress is visible
 function exportAll() {
   if (!S.lib) return;
-  if (!stagedPhotos().length) return toast('Nothing staged yet — press 1, 2 or 3 to pick');
+  if (!stagedPhotos().length) return toast('No picks yet — press 1, 2 or 3 to pick a look');
   if (S.solo) closeSolo();
   openStaged();
   doExport();
@@ -2097,7 +2233,7 @@ async function doExport() {
     if (plain.length || rawFor.length) {
       const r = await fetch('/api/export', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Brackit': '1' },
         body: JSON.stringify({ dest: S.dest, ids: plain.map((p) => p.id), rawFor }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'export failed');
@@ -2142,7 +2278,7 @@ async function doExport() {
     result.innerHTML = '';
     const bits = [`Copied ${copied}`];
     if (skipped) bits.push(`${skipped} already there`);
-    if (failed.length) bits.push(`${failed.length} failed (${failed.map((f) => f.name).join(', ')})`);
+    if (failed.length) bits.push(`${failed.length} failed — ${failed[0].name}: ${failed[0].error}${failed.length > 1 ? ' (and others)' : ''}`);
     result.append(el('span', '', bits.join(' · ') + ' → '));
     const reveal = el('button', '', S.dest.replace(S.server.home, '~'));
     reveal.title = 'Show in Finder';
@@ -2170,6 +2306,7 @@ async function doExport() {
 
 // Renders the crop from the full-resolution file and hands the JPEG to the
 // server, which restores the camera's EXIF before writing it.
+let stagedIOs = []; // lazy-loading observers of the picks view, disconnected on redraw
 function stagedObserver() {
   const io = new IntersectionObserver(
     (entries) => {
@@ -2181,6 +2318,7 @@ function stagedObserver() {
     },
     { root: $('#staged-scroll'), rootMargin: '400px' }
   );
+  stagedIOs.push(io);
   return io;
 }
 
@@ -2234,7 +2372,7 @@ async function exportEdited(p, edit) {
   canvas.width = canvas.height = 0;
   if (!blob) throw new Error('could not encode image');
   const q = new URLSearchParams({ id: p.id, dest: S.dest, w, h });
-  const r = await fetch(`/api/export-edited?${q}`, { method: 'POST', body: blob });
+  const r = await fetch(`/api/export-edited?${q}`, { method: 'POST', body: blob, headers: { 'X-Brackit': '1' } });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'export failed');
   return data;
@@ -2261,7 +2399,8 @@ function toast(msg, opts = {}) {
 
 /* ------------------------------------------------------------ delete from card */
 
-let lastDelete = null; // {token, until, restore}: the latest delete, undoable for a few seconds
+const lastDeletes = []; // [{token, until, restore}], newest last; each undoable for a few seconds
+let lastDelete = null; // (kept in step with the newest, for the Menu)
 
 async function deleteSet() {
   const set = S.view[S.idx];
@@ -2286,7 +2425,7 @@ async function deleteSet() {
     if (!next || next.kind === 'video') closeSolo();
     else S.solo.pos = selectedPos(next) ?? Math.min(S.solo.pos, next.photos.length - 1);
   }
-  lastDelete = {
+  pushDelete({
     token: res.token,
     until: Date.now() + res.undoMs,
     restore() {
@@ -2297,17 +2436,23 @@ async function deleteSet() {
       const i = S.view.indexOf(set);
       if (i >= 0) S.idx = i;
     },
-  };
+  });
   render();
   updateFlagsUi();
   const label = names.length > 1 ? `${names[0]} – ${names[names.length - 1]}` : names[0];
   toast(`Deleted ${label} from the card`, { action: undoDelete, label: 'Undo ⌘Z', ms: res.undoMs - 300 });
 }
 
+function pushDelete(d) {
+  lastDeletes.push(d);
+  lastDelete = d;
+}
+
 async function undoDelete() {
-  const d = lastDelete;
-  if (!d || Date.now() > d.until) return toast('Nothing to undo');
-  lastDelete = null;
+  while (lastDeletes.length && Date.now() > lastDeletes.at(-1).until) lastDeletes.pop();
+  const d = lastDeletes.pop();
+  lastDelete = lastDeletes.at(-1) || null;
+  if (!d) return toast('Nothing to undo');
   try {
     await api('POST', '/api/undo-delete', { token: d.token });
   } catch (e) {
@@ -2347,13 +2492,14 @@ async function cleanUpCard(items) {
     if (!before.has(set)) before.set(set, set.photos.slice());
     set.photos = set.photos.filter((x) => x !== id);
   }
-  lastDelete = {
+  pushDelete({
     token: res.token,
     until: Date.now() + res.undoMs,
     restore() {
       for (const [set, photos] of before) set.photos = photos;
     },
-  };
+  });
+  ticksChanged();
   render();
   drawTicks();
   toast(`Deleted ${fmtN(doomed.length)} unpicked look${doomed.length === 1 ? '' : 's'} from the card`, {
@@ -2551,14 +2697,27 @@ function bindUi() {
   document.addEventListener('keydown', (e) => {
     // A clicked button keeps focus, and Space/Enter would press it again on top
     // of Brackit's own shortcut. Keys belong to Brackit, not to buttons.
+    // (Someone who reached a button with Tab is using the keyboard on purpose:
+    // there, Space/Enter press it as usual.)
     const t = e.target;
-    if (t && (t.tagName === 'BUTTON' || (t.tagName === 'INPUT' && t.type === 'checkbox'))) {
+    if (t && t.dataset && t.dataset.mouse && (t.tagName === 'BUTTON' || (t.tagName === 'INPUT' && t.type === 'checkbox'))) {
       t.blur();
       if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
     }
+    if (t && t.tagName === 'BUTTON' && !t.dataset.mouse && (e.key === ' ' || e.key === 'Enter')) return;
     if (e.repeat && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) S.flipping = true;
     onKey(e);
   });
+  // remember which buttons got focus from the mouse (vs. Tab)
+  document.addEventListener('mousedown', (e) => {
+    const b = e.target.closest && e.target.closest('button, input[type=checkbox]');
+    if (b) b.dataset.mouse = '1';
+  });
+  document.addEventListener('focusin', (e) => {
+    const b = e.target;
+    if (b && b.dataset && b.dataset.mouse) setTimeout(() => document.activeElement !== b && delete b.dataset.mouse, 0);
+  });
+  document.addEventListener('focusout', (e) => e.target && e.target.dataset && delete e.target.dataset.mouse);
   // and clicking a button shouldn't leave it holding focus at all
   document.addEventListener('mouseup', (e) => {
     const b = e.target.closest && e.target.closest('button');
@@ -2588,6 +2747,8 @@ const histCache = new WeakMap();
 const BINS = 64;
 
 function histogramOf(src) {
+  if (src && src.classList && src.classList.contains('crop-view')) src = src.querySelector('img');
+  if (!src) return null;
   if (histCache.has(src)) return histCache.get(src);
   const sw = srcW(src);
   const sh = srcH(src);
@@ -2709,7 +2870,7 @@ const MENU = [
     { id: 'nextunpicked', label: 'Next unpicked shot', key: 'U', press: { key: 'u' }, when: inViewer },
     { id: 'crop', label: 'Crop & straighten…', key: 'C', press: { key: 'c' }, when: isPhotoSet },
     { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: inViewer },
-    { id: 'undo', label: 'Undo delete', key: '⌘Z', press: { key: 'z', metaKey: true }, when: () => !!lastDelete && Date.now() < lastDelete.until },
+    { id: 'undo', label: 'Undo delete', key: '⌘Z', press: { key: 'z', metaKey: true }, when: () => lastDeletes.some((d) => Date.now() < d.until) },
   ]],
   ['Card', [
     { id: 'open', label: 'Choose folder, dates or card…', key: 'O', press: { key: 'o' }, when: inViewer },
@@ -2858,7 +3019,7 @@ function onKey(e) {
 
   if (!$('#survey').hidden) {
     if (k === 'Enter') openScoped();
-    else if (k === 'Escape') $('#survey-back').click();
+    else if (k === 'Escape') (S.lib ? backToPhotos() : $('#survey-back').click());
     else if (k === 'a' || k === 'A') quickRange('all');
     else if (k === 'l' || k === 'L') quickRange('last');
     else if (k === 'w' || k === 'W') quickRange('week');
@@ -2911,8 +3072,11 @@ function onKey(e) {
       if (!set) break;
       const pos = Number(k) - 1;
       if (pos >= set.photos.length) break;
+      const multi = set.photos.filter((id) => S.flags.has(photo(id).key)).length > 1;
       if (digit && addMod) toggleFlag(pos);
-      else selectOnly(pos);
+      else if (S.solo && multi) {
+        // looking around a multi-pick in the large view: switch, don't wipe picks
+      } else selectOnly(pos);
       if (S.solo && S.solo.pos !== pos) {
         S.solo.pos = pos;
         renderSolo();

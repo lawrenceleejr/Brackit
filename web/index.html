@@ -18,10 +18,10 @@
       <button id="eject-btn" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
       <button id="lib-btn" class="link" title="Library of the export folder (L)">Library</button>
       <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
-      <button id="staged-btn" class="link" title="Staged for export (S)">Staged <span id="staged-count" class="num">0</span></button>
+      <button id="staged-btn" class="link" title="Your picks (S); E exports them">Picks <span id="staged-count" class="num">0</span></button>
       <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
       <button id="menu-btn" class="link" title="All tools">Menu</button>
-      <button id="help-btn" class="link" title="Shortcuts (?)">?</button>
+      <button id="help-btn" class="link" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
     </div>
   </header>
 
@@ -46,6 +46,7 @@
       <div class="survey-head">
         <h1 id="survey-name"></h1>
         <span class="survey-head-actions">
+          <button id="survey-return" class="link" title="Back to the photos you had open (Esc)" hidden>Back to photos</button>
           <button id="survey-eject" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
           <button id="survey-back" class="link">Other card</button>
         </span>
@@ -125,7 +126,7 @@
   <section id="staged" hidden>
     <div class="staged-head">
       <div>
-        <h2>Staged for export</h2>
+        <h2>Picks</h2>
         <div id="staged-summary" class="muted"></div>
       </div>
       <div class="staged-actions">
@@ -134,7 +135,7 @@
         <button id="dest" class="link dest" title="Change destination"></button>
         <button id="clear-flags" class="btn quiet">Clear</button>
         <button id="export" class="btn primary">Export</button>
-        <button id="staged-close" class="link close" title="Close (Esc)">×</button>
+        <button id="staged-close" class="link close" title="Close (Esc)" aria-label="Close picks">×</button>
       </div>
     </div>
     <div id="export-progress"><div></div></div>
@@ -152,7 +153,7 @@
       <dl>
         <dt>← →</dt><dd>previous / next set</dd>
         <dt>⇧ ← →</dt><dd>jump ten sets</dd>
-        <dt>1 2 3</dt><dd>pick that look for export</dd>
+        <dt>1 2 3</dt><dd>pick that look (in the large view: show it)</dd>
         <dt>⌘ 1 2 3</dt><dd>add / remove a look (pick several)</dd>
         <dt>0</dt><dd>unstage this set</dd>
         <dt>⌘ ⌫</dt><dd>delete every version from the card (⌘Z undoes, 10 s)</dd>
@@ -160,7 +161,7 @@
         <dt>click</dt><dd>view one look large</dd>
         <dt>↑ ↓</dt><dd>cycle looks (large view)</dd>
         <dt>Z</dt><dd>actual pixels (large view)</dd>
-        <dt>C</dt><dd>straighten &amp; crop (large view)</dd>
+        <dt>C</dt><dd>straighten &amp; crop (applies to all looks of the shot)</dd>
         <dt>I</dt><dd>camera settings &amp; film recipe</dd>
         <dt>H</dt><dd>histogram</dd>
         <dt>`</dt><dd>loupe (scroll to zoom)</dd>
@@ -170,10 +171,11 @@
         <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
         <dt>space</dt><dd>play / pause (video)</dd>
         <dt>F</dt><dd>full screen</dd>
-        <dt>S</dt><dd>staged photos</dd>
-        <dt>E</dt><dd>export everything staged</dd>
+        <dt>S</dt><dd>your picks</dd>
+        <dt>E</dt><dd>export your picks</dd>
+        <dt>Home End</dt><dd>first / last set</dd>
         <dt>B</dt><dd>brackets only / all photos</dd>
-        <dt>U</dt><dd>jump to next unflagged set</dd>
+        <dt>U</dt><dd>next set with nothing picked</dd>
         <dt>G</dt><dd>overview: thumbnails of every set</dd>
         <dt>O</dt><dd>open another folder</dd>
         <dt>⌘ E</dt><dd>eject the card</dd>

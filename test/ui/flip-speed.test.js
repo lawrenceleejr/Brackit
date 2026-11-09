@@ -226,3 +226,19 @@ test('large view (space): arrow presses paint within 50 ms, cold slow card, quic
   assert.deepEqual(errors, []);
   await page.close();
 });
+
+test('cropped sets: arrow presses paint within 50 ms', async () => {
+  const { page, errors } = await openCard({});
+  // crop and straighten every photo, as if each set had been edited
+  await page.evaluate(() => {
+    for (const p of Object.values(S.lib.photos)) S.edits[p.key] = { angle: 1.5, crop: { x: 0.1, y: 0.1, w: 0.8, h: 0.75 }, aspect: 'free' };
+    render();
+  });
+  await page.waitForTimeout(3000);
+  await page.evaluate(() => (window.__keyDurations = []));
+  const r = await flip(page, { presses: 25, gapMs: 120 });
+  assertFast('cropped', r);
+  assert.ok(r.screens.every((s) => s.filled), 'some frame was empty after a press');
+  assert.deepEqual(errors, []);
+  await page.close();
+});

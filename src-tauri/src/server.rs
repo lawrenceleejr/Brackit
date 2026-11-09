@@ -229,6 +229,19 @@ fn handle(app: Arc<App>, req: Request) {
     }
     let (path, params) = split_url(req.url());
     if path.starts_with("/api/") {
+        // Only Brackit's own page may use the API: a web page elsewhere can't
+        // send this header without a CORS preflight, which we never grant,
+        // and a foreign Origin is refused outright.
+        let port = get_header(&req, "Host").and_then(|h| h.rsplit_once(':')).map(|(_, p)| p.to_string()).unwrap_or_default();
+        if let Some(origin) = get_header(&req, "Origin") {
+            let own = [format!("http://127.0.0.1:{}", port), format!("http://localhost:{}", port)];
+            if !own.iter().any(|o| o == origin) {
+                return err(req, 403, "forbidden origin");
+            }
+        }
+        if *req.method() != Method::Get && get_header(&req, "X-Brackit") != Some("1") {
+            return err(req, 403, "missing X-Brackit header");
+        }
         api(&app, req, &path, &params);
     } else {
         serve_static(req, &path);
@@ -503,7 +516,7 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             let s = |k: &str| body.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
             let scope = library::Scope { folder: s("folder"), from: s("from"), to: s("to"), after: body.get("after").and_then(Value::as_f64) };
             // leftovers from a session that quit mid-undo window: finish that delete
-            let _ = fs::remove_dir_all(p.join(TRASH));
+            app.deleter.purge_stale(&p);
             app.progress.scanning.store(true, Ordering::SeqCst);
             let Some(lib) = library::scan(&p, &scope, &app.progress) else {
                 return err(req, 409, "superseded by a newer scan");
@@ -612,6 +625,10 @@ fn summary(lib: &Library) -> Value {
 /// Read an embedded JPEG (thumbnail or preview) out of the file, with the
 /// parent photo's orientation grafted on so browsers rotate it.
 fn embedded_jpeg(p: &Photo, (start, len): (u64, u64)) -> Option<Vec<u8>> {
+    // offsets come from the file's own header: don't trust them blindly
+    if len < 4 || len > 64 * 1024 * 1024 || start.checked_add(len)? > p.size {
+        return None;
+    }
     let mut buf = vec![0u8; len as usize];
     File::open(&p.file)
         .and_then(|mut f| {
@@ -619,6 +636,9 @@ fn embedded_jpeg(p: &Photo, (start, len): (u64, u64)) -> Option<Vec<u8>> {
             f.read_exact(&mut buf)
         })
         .ok()?;
+    if buf[0] != 0xff || buf[1] != 0xd8 {
+        return None; // not a JPEG where the header said: caller falls back
+    }
     if p.orientation != 1 && buf.len() > 2 {
         let seg = jpeg::orientation_segment(p.orientation);
         let mut out = Vec::with_capacity(buf.len() + seg.len());
@@ -667,14 +687,11 @@ fn serve_image(req: Request, p: &Photo, size: Size) {
         Size::Preview => p.preview,
         Size::Full => None,
     };
-    if let Some(range) = range {
-        return match embedded_jpeg(p, range) {
-            Some(buf) => {
-                let _ = req.respond(Response::from_data(buf).with_header(jpeg_type).with_header(cache));
-            }
-            None => err(req, 500, "could not read preview"),
-        };
+    if let Some(buf) = range.and_then(|r| embedded_jpeg(p, r)) {
+        let _ = req.respond(Response::from_data(buf).with_header(jpeg_type).with_header(cache));
+        return;
     }
+    // (no usable embedded image: the original itself)
     match File::open(&p.file) {
         Ok(f) => {
             let resp = Response::new(StatusCode(200), vec![jpeg_type, cache], f, Some(p.size as usize), None);
@@ -723,19 +740,37 @@ fn serve_video(req: Request, p: &Photo) {
 
 /// Next free name in `dir`; if a same-sized file already has the name, that's
 /// treated as "already exported" and returned with exists=true.
-fn unique_dest(dir: &Path, name: &str, size: u64) -> io::Result<(PathBuf, bool)> {
+/// Next free name in `dir`. A file already there counts as "this one" only if
+/// both size and modification time match (FAT stores times to 2 s): file
+/// numbers repeat across cameras and counter resets, and uncompressed RAWs
+/// are all the same size.
+fn unique_dest(dir: &Path, name: &str, size: u64, mtime: f64) -> io::Result<(PathBuf, bool)> {
     let p = Path::new(name);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
     let ext = p.extension().and_then(|s| s.to_str()).map(|e| format!(".{}", e)).unwrap_or_default();
     for i in 0..1000 {
         let cand = dir.join(if i == 0 { name.to_string() } else { format!("{}-{}{}", stem, i, ext) });
         match fs::metadata(&cand) {
-            Ok(md) if md.len() == size => return Ok((cand, true)),
+            Ok(md) if md.len() == size && same_time(&md, mtime) => return Ok((cand, true)),
             Ok(_) => continue,
             Err(_) => return Ok((cand, false)),
         }
     }
     Err(io::Error::new(io::ErrorKind::Other, "too many name collisions"))
+}
+
+fn same_time(md: &fs::Metadata, ms: f64) -> bool {
+    md.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(false, |d| (d.as_millis() as f64 - ms).abs() <= 2000.0)
+}
+
+/// Write via a hidden temporary name, renamed into place when complete, so
+/// an interrupted export never leaves a truncated file that looks finished.
+fn partial_path(target: &Path) -> PathBuf {
+    let name = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    target.with_file_name(format!(".{}.partial", name))
 }
 
 fn set_mtime(path: &Path, ms: f64) {
@@ -745,19 +780,21 @@ fn set_mtime(path: &Path, ms: f64) {
 }
 
 fn copy_one(p: &Photo, dest: &Path) -> io::Result<bool> {
-    let (target, exists) = unique_dest(dest, &p.name, p.size)?;
+    let (target, exists) = unique_dest(dest, &p.name, p.size, p.mtime)?;
     if exists {
         return Ok(false);
     }
+    let tmp = partial_path(&target);
     let mut src = File::open(&p.file)?;
-    let mut out = OpenOptions::new().write(true).create_new(true).open(&target)?;
-    let r = io::copy(&mut src, &mut out).and_then(|_| out.flush());
+    let mut out = OpenOptions::new().write(true).create(true).truncate(true).open(&tmp)?;
+    let r = io::copy(&mut src, &mut out).and_then(|_| out.sync_all());
     drop(out);
     if let Err(e) = r {
-        let _ = fs::remove_file(&target);
+        let _ = fs::remove_file(&tmp);
         return Err(e);
     }
-    set_mtime(&target, p.mtime);
+    set_mtime(&tmp, p.mtime);
+    fs::rename(&tmp, &target)?;
     Ok(true)
 }
 
@@ -872,12 +909,15 @@ fn export_edited(app: &Arc<App>, mut req: Request, params: &HashMap<String, Stri
     let out = jpeg::graft_segment(&body, seg.as_deref());
     let result = (|| -> io::Result<(PathBuf, bool)> {
         fs::create_dir_all(&dest)?;
-        let (target, exists) = unique_dest(&dest, &photo.name, out.len() as u64)?;
+        let (target, exists) = unique_dest(&dest, &photo.name, out.len() as u64, photo.mtime)?;
         if !exists {
-            let mut f = OpenOptions::new().write(true).create_new(true).open(&target)?;
+            let tmp = partial_path(&target);
+            let mut f = OpenOptions::new().write(true).create(true).truncate(true).open(&tmp)?;
             f.write_all(&out)?;
+            f.sync_all()?;
             drop(f);
-            set_mtime(&target, photo.mtime);
+            set_mtime(&tmp, photo.mtime);
+            fs::rename(&tmp, &target)?;
         }
         Ok((target, exists))
     })();
@@ -986,14 +1026,35 @@ impl Deleter {
         Ok(token)
     }
 
+    /// Put the files back. Reports failure (and keeps what's left in the
+    /// holding folder) if any of them can't be restored.
     fn undo(&self, token: &str) -> bool {
         let Some(job) = self.pending.lock().unwrap().remove(token) else { return false };
+        let mut ok = true;
         for (from, to) in &job.moves {
-            let _ = fs::rename(to, from);
+            if fs::rename(to, from).is_err() {
+                ok = false;
+            }
         }
-        let _ = fs::remove_dir_all(&job.dir);
-        cleanup_trash_root(&job.root);
-        true
+        if ok {
+            let _ = fs::remove_dir_all(&job.dir);
+            cleanup_trash_root(&job.root);
+        }
+        ok
+    }
+
+    /// Leftovers from a session that quit (or crashed) mid-undo-window: finish
+    /// those deletes, but never touch a delete that can still be undone.
+    fn purge_stale(&self, root: &Path) {
+        let live: Vec<PathBuf> = self.pending.lock().unwrap().values().map(|j| j.dir.clone()).collect();
+        if let Ok(rd) = fs::read_dir(root.join(TRASH)) {
+            for e in rd.flatten() {
+                if !live.contains(&e.path()) {
+                    let _ = fs::remove_dir_all(e.path());
+                }
+            }
+        }
+        cleanup_trash_root(root);
     }
 
     fn purge_all(&self) {

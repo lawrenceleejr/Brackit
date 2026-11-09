@@ -23,7 +23,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brackit-'));
 async function api(method, url, body, raw) {
   const r = await fetch(base + url, {
     method,
-    headers: body && !raw ? { 'Content-Type': 'application/json' } : undefined,
+    headers: { 'X-Brackit': '1', ...(body && !raw ? { 'Content-Type': 'application/json' } : {}) },
     body: raw ? body : body ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, data: r.headers.get('content-type')?.startsWith('application/json') ? await r.json() : Buffer.from(await r.arrayBuffer()) };
@@ -423,4 +423,55 @@ test('export-folder library: browse, rate, flag, move to trash', async () => {
   assert.deepEqual(t.moved, [p.id]);
   assert.ok(!fs.existsSync(path.join(outDir, 'DSCF0002.JPG')), 'file left the export folder');
   assert.equal((await api('POST', '/api/out/open', { path: path.join(tmp, 'nope') })).status, 404);
+});
+
+test("only Brackit's own page can change anything", async () => {
+  // a request from another website (foreign Origin) is refused
+  let r = await fetch(`${base}/api/flags`, { method: 'PUT', headers: { 'X-Brackit': '1', Origin: 'https://evil.example' }, body: '{"flags":[]}' });
+  assert.equal(r.status, 403);
+  // a "simple" cross-site POST can't add the header: refused too
+  r = await fetch(`${base}/api/delete`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{"ids":["x"]}' });
+  assert.equal(r.status, 403);
+  // our own origin is fine
+  r = await fetch(`${base}/api/flags`, { method: 'PUT', headers: { 'X-Brackit': '1', Origin: base, 'Content-Type': 'application/json' }, body: '{"flags":[]}' });
+  assert.equal(r.status, 200);
+});
+
+test('ids are stable across scans and differ between files', async () => {
+  const a = (await api('POST', '/api/open', { path: card })).data;
+  const b = (await api('POST', '/api/open', { path: card, folder: 'DCIM/100_FUJI' })).data;
+  const ida = Object.fromEntries(Object.values(a.photos).map((p) => [p.rel, p.id]));
+  for (const p of Object.values(b.photos)) assert.equal(p.id, ida[p.rel], p.rel);
+  assert.equal(new Set(Object.values(ida)).size, Object.keys(ida).length);
+});
+
+test('undo still works after reopening the card mid-window', async () => {
+  const l = (await api('POST', '/api/open', { path: card })).data;
+  const set = l.sets.find((s) => s.photos.length === 1 && l.photos[s.photos[0]].kind === 'photo');
+  const file = path.join(card, l.photos[set.photos[0]].rel);
+  const d = (await api('POST', '/api/delete', { ids: set.photos })).data;
+  assert.ok(!fs.existsSync(file));
+  await api('POST', '/api/open', { path: card }); // e.g. pressing O to choose other dates
+  const u = await api('POST', '/api/undo-delete', { token: d.token });
+  assert.equal(u.status, 200);
+  assert.ok(fs.existsSync(file), 'the file came back');
+});
+
+test('export: same name and size but a different file is not "already there"', async () => {
+  const dest = path.join(tmp, 'out-collide');
+  fs.mkdirSync(dest, { recursive: true });
+  const l = (await api('GET', '/api/library')).data;
+  const p = Object.values(l.photos).find((x) => x.kind === 'photo');
+  const src = fs.readFileSync(path.join(card, p.rel));
+  // a different photo with the same name and size, from another card
+  const other = Buffer.from(src);
+  other[other.length - 3] ^= 0xff;
+  fs.writeFileSync(path.join(dest, p.name), other);
+  fs.utimesSync(path.join(dest, p.name), new Date(2020, 0, 1), new Date(2020, 0, 1));
+  const r = await api('POST', '/api/export', { dest, ids: [p.id] });
+  const end = JSON.parse(r.data.toString().trim().split('\n').at(-1));
+  assert.equal(end.copied, 1, 'copied under a new name instead of being skipped');
+  const names = fs.readdirSync(dest).sort();
+  assert.ok(names.some((n) => /-1\./.test(n)), names.join(','));
+  assert.ok(!names.some((n) => n.endsWith('.partial')), 'no temporary files left');
 });

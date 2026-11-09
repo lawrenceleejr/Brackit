@@ -188,7 +188,9 @@ fn parse_exif(buf: &[u8], base: usize, out: &mut Meta) {
                 let ifd1 = t.ifd(ifd1_off);
                 if let (Some(off), Some(len)) = (t.num(Tiff::find(&ifd1, 0x0201)), t.num(Tiff::find(&ifd1, 0x0202))) {
                     let (start, len) = (base + off as usize, len as usize);
-                    if len > 2 && len < 256 * 1024 && start + 2 <= buf.len() && buf[start] == 0xff && buf[start + 1] == 0xd8 {
+                    // verify the SOI if we have those bytes; otherwise it's checked when served
+                    let ok = start + 2 > buf.len() || (buf[start] == 0xff && buf[start + 1] == 0xd8);
+                    if len > 2 && len < 256 * 1024 && ok {
                         out.thumb = Some((start as u64, len as u64));
                     }
                 }
@@ -236,71 +238,82 @@ fn parse_mpf(buf: &[u8], base: usize, out: &mut Meta) {
     }
 }
 
-pub enum Parsed {
-    Done(Meta),
-    NeedMore(usize),
-    NotJpeg,
-}
-
-/// Parse header segments from a buffer that starts at file offset 0.
-pub fn parse_header(buf: &[u8]) -> Parsed {
-    if buf.len() < 4 || buf[0] != 0xff || buf[1] != 0xd8 {
-        return Parsed::NotJpeg;
-    }
+/// Read a JPEG's header metadata with as little I/O as possible: hop from
+/// segment to segment and read only what's needed (the EXIF part of APP1, the
+/// small MPF index in APP2, the frame size). On an SD card with thousands of
+/// files this is most of the scan time.
+pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
+    const EXIF_READ: u64 = 32 * 1024;
+    let mut f = File::open(path)?;
     let mut out = Meta { orientation: 1, ..Default::default() };
-    let mut p = 2;
-    while p + 4 <= buf.len() {
-        if buf[p] != 0xff {
+    let mut soi = [0u8; 2];
+    if f.read_exact(&mut soi).is_err() || soi != [0xff, 0xd8] {
+        return Ok(out);
+    }
+    let read_at = |f: &mut File, at: u64, n: u64| -> std::io::Result<Vec<u8>> {
+        let mut buf = Vec::with_capacity(n as usize);
+        f.seek(SeekFrom::Start(at))?;
+        f.take(n).read_to_end(&mut buf)?;
+        Ok(buf)
+    };
+    let mut pos: u64 = 2;
+    for _ in 0..64 {
+        let mut h = [0u8; 4];
+        if f.seek(SeekFrom::Start(pos)).is_err() || f.read_exact(&mut h).is_err() || h[0] != 0xff {
             break;
         }
-        let marker = buf[p + 1];
-        if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
-            p += 2;
+        let marker = h[1];
+        if marker == 0xff {
+            pos += 1;
             continue;
         }
-        if marker == 0xff {
-            p += 1;
+        if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
+            pos += 2;
             continue;
         }
         if marker == 0xda || marker == 0xd9 {
             break;
         }
-        let len = u16::from_be_bytes([buf[p + 2], buf[p + 3]]) as usize;
-        let seg_end = p + 2 + len;
-        if seg_end > buf.len() {
-            return Parsed::NeedMore(seg_end + 4);
+        let len = u16::from_be_bytes([h[2], h[3]]) as u64;
+        let seg_len = 2 + len;
+        match marker {
+            0xe1 => {
+                // offsets inside the segment are made absolute afterwards
+                let mut seg = read_at(&mut f, pos, seg_len.min(EXIF_READ))?;
+                if seg.len() >= 10 && &seg[4..10] == b"Exif\0\0" {
+                    let mut m = Meta { orientation: 1, ..Default::default() };
+                    parse_exif(&seg, 10, &mut m);
+                    if m.film_sim.is_none() && seg_len > EXIF_READ {
+                        // maker note sits further in than usual: read it all
+                        seg = read_at(&mut f, pos, seg_len)?;
+                        m = Meta { orientation: 1, ..Default::default() };
+                        parse_exif(&seg, 10, &mut m);
+                    }
+                    m.thumb = m.thumb.map(|(s, l)| (s + pos, l));
+                    let (preview, frame_w, frame_h) = (out.preview, out.frame_width, out.frame_height);
+                    out = Meta { preview, frame_width: frame_w, frame_height: frame_h, ..m };
+                }
+            }
+            0xe2 => {
+                let seg = read_at(&mut f, pos, seg_len.min(64 * 1024))?;
+                if seg.len() >= 8 && &seg[4..8] == b"MPF\0" {
+                    let mut m = Meta::default();
+                    parse_mpf(&seg, 8, &mut m);
+                    out.preview = m.preview.map(|(s, l)| (s + pos, l));
+                }
+            }
+            0xc0..=0xc2 => {
+                let seg = read_at(&mut f, pos, 9)?;
+                if seg.len() == 9 {
+                    out.frame_height = Some(u16::from_be_bytes([seg[5], seg[6]]) as u32);
+                    out.frame_width = Some(u16::from_be_bytes([seg[7], seg[8]]) as u32);
+                }
+            }
+            _ => {}
         }
-        let data = p + 4;
-        let seg = &buf[..seg_end];
-        if marker == 0xe1 && seg_end >= data + 6 && &buf[data..data + 6] == b"Exif\0\0" {
-            parse_exif(seg, data + 6, &mut out);
-        } else if marker == 0xe2 && seg_end >= data + 4 && &buf[data..data + 4] == b"MPF\0" {
-            parse_mpf(seg, data + 4, &mut out);
-        } else if matches!(marker, 0xc0..=0xc2) && seg_end >= data + 5 {
-            out.frame_height = Some(u16::from_be_bytes([buf[data + 1], buf[data + 2]]) as u32);
-            out.frame_width = Some(u16::from_be_bytes([buf[data + 3], buf[data + 4]]) as u32);
-        }
-        p = seg_end;
+        pos += seg_len;
     }
-    Parsed::Done(out)
-}
-
-pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
-    let mut f = File::open(path)?;
-    // Fuji's EXIF + MPF headers fit in ~70 KB; read a little more than that
-    // (a short read means a grown buffer, re-read from the start).
-    let mut size = 80 * 1024;
-    for _ in 0..4 {
-        let mut buf = Vec::with_capacity(size);
-        (&mut f).take(size as u64).read_to_end(&mut buf)?;
-        f.seek(SeekFrom::Start(0))?;
-        match parse_header(&buf) {
-            Parsed::Done(m) => return Ok(m),
-            Parsed::NeedMore(n) if buf.len() == size => size = n.max(size * 2),
-            Parsed::NeedMore(_) | Parsed::NotJpeg => return Ok(Meta { orientation: 1, ..Default::default() }),
-        }
-    }
-    Ok(Meta { orientation: 1, ..Default::default() })
+    Ok(out)
 }
 
 /// Check the MPF range really begins with a JPEG SOI marker.

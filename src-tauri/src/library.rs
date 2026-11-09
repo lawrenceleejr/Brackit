@@ -380,7 +380,24 @@ fn attach_raws(photos: &mut [Photo], sets: &[Set], raws: &[PathBuf]) {
     }
 }
 
-fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
+/// A photo's id: a hash of its path, size and time. The same file keeps the
+/// same id across scans (so cached images stay right), and a different file
+/// can never inherit an old one.
+fn stable_id(file: &Path, size: u64, mtime: f64) -> String {
+    let mut h: u64 = 0xcbf29ce484222325; // FNV-1a
+    let mut eat = |bytes: &[u8]| {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    eat(file.to_string_lossy().as_bytes());
+    eat(&size.to_le_bytes());
+    eat(&(mtime as u64).to_le_bytes());
+    format!("{:012x}", h & 0xffff_ffff_ffff)
+}
+
+fn read_one(root: &Path, file: &Path, _i: usize) -> Option<Photo> {
     let md = std::fs::metadata(file).ok()?;
     let mtime = mtime_ms(&md);
     let name = file.file_name()?.to_string_lossy().to_string();
@@ -388,13 +405,7 @@ fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
     let meta = if video {
         jpeg::Meta { orientation: 1, date_time: Some(exif_date(mtime)), ..Default::default() }
     } else {
-        let mut m = jpeg::read_meta(file).ok()?;
-        if let Some((start, _)) = m.preview {
-            if !jpeg::valid_preview(file, start) {
-                m.preview = None;
-            }
-        }
-        m
+        jpeg::read_meta(file).ok()?
     };
     let key = format!(
         "{}:{}:{}",
@@ -403,7 +414,7 @@ fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
         meta.date_time.clone().unwrap_or_else(|| format!("{}", mtime.round() as i64))
     );
     Some(Photo {
-        id: i.to_string(),
+        id: stable_id(file, md.len(), mtime),
         file: file.to_path_buf(),
         dir: file.parent().map(Path::to_path_buf).unwrap_or_default(),
         rel: file.strip_prefix(root).map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
