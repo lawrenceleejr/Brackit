@@ -1646,6 +1646,7 @@ function openSolo(pos, opts = {}) {
 }
 
 function closeSolo() {
+  soloToken++; // anything still pending for the large view is now stale
   clearTimeout(fullTimer);
   clearOverlays($('#solo'));
   if (S.stageStale) requestAnimationFrame(() => !S.solo && render());
@@ -1705,10 +1706,10 @@ function renderSolo() {
       h.id = 'solo-hist';
       solo.append(h);
     }
-    if (S.solo.zoom && level === 'full') zoomTo(S.solo.zx ?? 0.5, S.solo.zy ?? 0.5);
+    if (S.solo && S.solo.zoom && level === 'full') zoomTo(S.solo.zx ?? 0.5, S.solo.zy ?? 0.5);
     // clipping / annotations sit over sharp pictures only (not the thumbnail)
     if (level === 'thumb') clearOverlays(solo);
-    else requestAnimationFrame(() => token === soloToken && applyOverlays(solo, node, id, 'card', { zoomed: S.solo.zoom }));
+    else requestAnimationFrame(() => token === soloToken && S.solo && applyOverlays(solo, node, id, 'card', { zoomed: S.solo.zoom }));
   };
   const edit = editOf(p);
   const sharper = (level) => frame.dataset.id === id && (frame.dataset.level === 'full' || (level === 'thumb' && frame.dataset.level === 'preview'));
