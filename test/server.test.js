@@ -167,3 +167,33 @@ test('rejects requests for other hosts', async () => {
   });
   assert.equal(status, 403);
 });
+
+test('survey summarises folders and days; open can be limited to either', async () => {
+  const other = path.join(card, 'DCIM', '101_FUJI');
+  fs.mkdirSync(other, { recursive: true });
+  const day = new Date(2026, 9, 1, 12, 0, 0); // 1 Oct 2026, local time
+  for (const [n, fm] of [['DSCF0101.JPG', 0x600], ['DSCF0102.JPG', 0x800]]) {
+    const f = path.join(other, n);
+    fs.writeFileSync(f, buildJpeg({ dateTime: '2026:10:01 12:00:00', filmMode: fm }));
+    fs.utimesSync(f, day, day);
+  }
+  const sv = (await api('POST', '/api/survey', { path: card })).data;
+  assert.equal(sv.total, 10);
+  const oct1 = sv.groups.filter((g) => g.day === '2026-10-01');
+  assert.deepEqual(oct1, [{ folder: 'DCIM/101_FUJI', day: '2026-10-01', photos: 2, videos: 0 }]);
+  const vids = sv.groups.filter((g) => g.videos).map((g) => [g.folder, g.day, g.videos]);
+  assert.deepEqual(vids, [['DCIM/100_FUJI', '2026-11-01', 1]]);
+
+  const byFolder = (await api('POST', '/api/open', { path: card, folder: 'DCIM/101_FUJI' })).data;
+  assert.deepEqual(byFolder.sets.map((s) => s.photos.length), [2]);
+  assert.equal(byFolder.scope.folder, 'DCIM/101_FUJI');
+  assert.equal(byFolder.root, fs.realpathSync(card), 'root stays the card');
+
+  const byDay = (await api('POST', '/api/open', { path: card, from: '2026-11-01', to: '2026-11-01' })).data;
+  assert.deepEqual(Object.values(byDay.photos).map((p) => p.name).sort(), ['DSCF0005.MOV']);
+
+  const all = (await api('POST', '/api/open', { path: card })).data;
+  assert.equal(Object.keys(all.photos).length, 10);
+  const lib2 = (await api('GET', '/api/library')).data;
+  assert.equal(lib2.sets.length, all.sets.length, 'reloading the window gets the loaded library without rescanning');
+});

@@ -265,7 +265,9 @@ pub fn parse_header(buf: &[u8]) -> Parsed {
 
 pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
     let mut f = File::open(path)?;
-    let mut size = 128 * 1024;
+    // Fuji's EXIF + MPF headers fit in ~70 KB; read a little more than that
+    // (a short read means a grown buffer, re-read from the start).
+    let mut size = 80 * 1024;
     for _ in 0..4 {
         let mut buf = Vec::with_capacity(size);
         (&mut f).take(size as u64).read_to_end(&mut buf)?;

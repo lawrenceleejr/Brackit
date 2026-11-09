@@ -37,6 +37,31 @@
     </div>
   </main>
 
+  <main id="survey" hidden>
+    <div class="survey-inner">
+      <div class="survey-head">
+        <h1 id="survey-name"></h1>
+        <button id="survey-back" class="link">Other card</button>
+      </div>
+      <div id="survey-folders-row" class="survey-row">
+        <div class="survey-label">Folder</div>
+        <div id="survey-folders" class="chips"></div>
+      </div>
+      <div class="survey-row">
+        <div class="survey-label">
+          Shots per day <span class="muted">— drag to choose a range</span>
+          <span id="survey-quick" class="quick"><button data-q="all">All</button><button data-q="last">Last day</button><button data-q="week">Last 7 days</button></span>
+        </div>
+        <svg id="survey-chart" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="survey-foot">
+        <span id="survey-sel"></span>
+        <span id="survey-status" class="muted"></span>
+        <button id="survey-open" class="btn primary">Open</button>
+      </div>
+    </div>
+  </main>
+
   <main id="viewer" hidden>
     <section id="stage"></section>
     <footer id="index">

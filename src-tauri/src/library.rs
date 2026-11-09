@@ -87,20 +87,71 @@ pub struct Set {
 #[derive(Default)]
 pub struct Library {
     pub root: Option<PathBuf>,
+    pub scope: Scope,
     pub photos: HashMap<String, Photo>,
     pub sets: Vec<Set>,
 }
 
+/// Progress of the current scan. Each scan takes a new generation number;
+/// starting another scan cancels the previous one, whose workers stop and
+/// no longer touch the counters.
 pub struct Progress {
     pub scanning: std::sync::atomic::AtomicBool,
     pub done: AtomicUsize,
     pub total: AtomicUsize,
+    pub generation: std::sync::atomic::AtomicU64,
 }
 
 impl Default for Progress {
     fn default() -> Self {
-        Progress { scanning: false.into(), done: 0.into(), total: 0.into() }
+        Progress { scanning: false.into(), done: 0.into(), total: 0.into(), generation: 0.into() }
     }
+}
+
+/// Which part of a card to load: a subfolder (relative to the card root)
+/// and/or an inclusive range of local capture days ("YYYY-MM-DD").
+#[derive(Default, Clone, Debug)]
+pub struct Scope {
+    pub folder: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+impl Scope {
+    fn day_ok(&self, day: &str) -> bool {
+        self.from.as_deref().map_or(true, |f| day >= f) && self.to.as_deref().map_or(true, |t| day <= t)
+    }
+}
+
+fn mtime_ms(md: &std::fs::Metadata) -> f64 {
+    md.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as f64).unwrap_or(0.0)
+}
+
+fn local_day(ms: f64) -> String {
+    use chrono::{Local, TimeZone};
+    Local.timestamp_millis_opt(ms as i64).single().map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default()
+}
+
+/// Cheap overview of a card for choosing what to load: only directory
+/// listings and file times are read (a camera writes the file time at
+/// capture), never the photos themselves.
+pub fn survey(root: &Path) -> serde_json::Value {
+    let mut files = Vec::new();
+    walk(root, 0, &mut files);
+    let mut groups: std::collections::BTreeMap<(String, String), (u64, u64)> = Default::default();
+    for f in &files {
+        let Ok(md) = std::fs::metadata(f) else { continue };
+        let day = local_day(mtime_ms(&md));
+        let folder = f.parent().and_then(|p| p.strip_prefix(root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let e = groups.entry((folder, day)).or_default();
+        if is_video(&name) { e.1 += 1 } else { e.0 += 1 }
+    }
+    let groups: Vec<_> = groups
+        .into_iter()
+        .map(|((folder, day), (photos, videos))| serde_json::json!({ "folder": folder, "day": day, "photos": photos, "videos": videos }))
+        .collect();
+    serde_json::json!({ "root": root.to_string_lossy(), "total": files.len(), "groups": groups })
 }
 
 const SKIP: [&str; 5] = [".Trashes", ".Spotlight-V100", ".fseventsd", "node_modules", ".git"];
@@ -198,12 +249,26 @@ pub fn group(photos: &mut Vec<Photo>) -> Vec<Set> {
         .collect()
 }
 
-pub fn scan(root: &Path, progress: &Progress) -> Library {
+/// Scan `root` (the card), limited to `scope`. Returns None if a newer scan
+/// superseded this one before it finished.
+pub fn scan(root: &Path, scope: &Scope, progress: &Progress) -> Option<Library> {
+    let generation = progress.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let current = || progress.generation.load(Ordering::SeqCst) == generation;
     progress.done.store(0, Ordering::SeqCst);
     progress.total.store(0, Ordering::SeqCst);
+    let start = match &scope.folder {
+        Some(f) if !f.is_empty() && !f.contains("..") => root.join(f),
+        _ => root.to_path_buf(),
+    };
     let mut files = Vec::new();
-    walk(root, 0, &mut files);
+    walk(&start, 0, &mut files);
+    if scope.from.is_some() || scope.to.is_some() {
+        files.retain(|f| std::fs::metadata(f).map(|md| scope.day_ok(&local_day(mtime_ms(&md)))).unwrap_or(false));
+    }
     files.sort();
+    if !current() {
+        return None;
+    }
     progress.total.store(files.len(), Ordering::SeqCst);
 
     let next = AtomicUsize::new(0);
@@ -213,32 +278,33 @@ pub fn scan(root: &Path, progress: &Progress) -> Library {
         for _ in 0..threads {
             s.spawn(|| loop {
                 let i = next.fetch_add(1, Ordering::SeqCst);
-                if i >= files.len() {
-                    break;
+                if i >= files.len() || !current() {
+                    break; // done, or cancelled by a newer scan
                 }
                 let photo = read_one(root, &files[i], i);
-                progress.done.fetch_add(1, Ordering::SeqCst);
+                if current() {
+                    progress.done.fetch_add(1, Ordering::SeqCst);
+                }
                 results.lock().unwrap()[i] = photo;
             });
         }
     });
+    if !current() {
+        return None;
+    }
     let mut photos: Vec<Photo> = results.into_inner().unwrap().into_iter().flatten().collect();
     let sets = group(&mut photos);
-    Library {
+    Some(Library {
         root: Some(root.to_path_buf()),
+        scope: scope.clone(),
         photos: photos.into_iter().map(|p| (p.id.clone(), p)).collect(),
         sets,
-    }
+    })
 }
 
 fn read_one(root: &Path, file: &Path, i: usize) -> Option<Photo> {
     let md = std::fs::metadata(file).ok()?;
-    let mtime = md
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as f64)
-        .unwrap_or(0.0);
+    let mtime = mtime_ms(&md);
     let name = file.file_name()?.to_string_lossy().to_string();
     let video = is_video(&name);
     let meta = if video {

@@ -49,11 +49,16 @@ async function boot() {
   S.edits = S.server.edits || {};
   S.dest = S.server.lastDest || S.server.defaultDest;
   bindUi();
-  const open = params.get('open') || (S.server.root ? S.server.root : null);
+  const open = params.get('open');
+  history.replaceState(null, '', location.pathname + (S.server.shell === 'tauri' ? '?shell=tauri' : ''));
   if (open) {
-    history.replaceState(null, '', location.pathname + (S.server.shell === 'tauri' ? '?shell=tauri' : ''));
     showWelcome();
     return openFolder(open);
+  }
+  if (S.server.root) {
+    // the server already has a card loaded (e.g. the window was reloaded)
+    const lib = await api('GET', '/api/library').catch(() => null);
+    if (lib && lib.sets) return loadLibrary(lib);
   }
   showWelcome();
 }
@@ -62,6 +67,7 @@ async function boot() {
 
 async function showWelcome() {
   $('#viewer').hidden = true;
+  $('#survey').hidden = true;
   $('#welcome').hidden = false;
   $('#bar .center').hidden = true;
   $('#staged-btn').hidden = $('#fs-btn').hidden = true;
@@ -91,27 +97,267 @@ async function chooseFolder(prompt, defaultPath) {
   return path;
 }
 
+/* ------------------------------------------------------------ survey: choose what to load */
+
+// Picking a card first shows a cheap overview (folders, shots per day) so a
+// big card can be narrowed to a folder and/or date range before loading.
+let surveyToken = 0;
 async function openFolder(path) {
+  const token = ++surveyToken;
   const status = $('#scan-status');
-  status.textContent = 'Reading card…';
+  status.textContent = 'Looking at the card…';
+  try {
+    const sv = await api('POST', '/api/survey', { path });
+    if (token !== surveyToken) return;
+    status.textContent = '';
+    showSurvey(sv);
+  } catch (e) {
+    if (token === surveyToken) status.textContent = e.message;
+  }
+}
+
+const SV = { data: null, folder: '', from: null, to: null, days: [], drag: null };
+const dayMs = 86400000;
+const parseDay = (d) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10));
+const fmtDayUTC = (t) => new Date(t).toISOString().slice(0, 10);
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function niceDay(d, withYear = true) {
+  const [y, m, dd] = d.split('-');
+  return `${+dd} ${MONTHS[+m - 1]}${withYear ? ' ' + y : ''}`;
+}
+const fmtN = (n) => n.toLocaleString('en-US');
+
+function showSurvey(sv) {
+  SV.data = sv;
+  SV.folder = '';
+  SV.from = SV.to = null;
+  $('#welcome').hidden = true;
+  $('#viewer').hidden = true;
+  $('#survey').hidden = false;
+  $('#survey-name').textContent = sv.root.split(/[\\/]/).filter(Boolean).pop() || sv.root;
+  $('#survey-name').title = sv.root;
+  $('#survey-status').textContent = '';
+  // folders: those that directly hold photos or videos
+  const folders = new Map();
+  for (const g of sv.groups) folders.set(g.folder, (folders.get(g.folder) || 0) + g.photos + g.videos);
+  const box = $('#survey-folders');
+  box.innerHTML = '';
+  const chip = (label, value, n, title) => {
+    const b = el('button', 'chip');
+    b.append(el('span', '', label), el('span', 'n', fmtN(n)));
+    b.dataset.folder = value;
+    b.title = title || label;
+    b.onclick = () => {
+      SV.folder = value;
+      // keep the date range only if it still holds something in this folder
+      renderSurvey();
+    };
+    box.append(b);
+  };
+  chip('All folders', '', sv.total);
+  [...folders.keys()].sort().forEach((f) => chip(f.split('/').pop() || '(card root)', f, folders.get(f), f));
+  $('#survey-folders-row').hidden = folders.size < 2;
+  renderSurvey();
+}
+
+// per-day totals for the chosen folder, on a continuous day axis
+function surveyDays() {
+  const by = new Map();
+  for (const g of SV.data.groups) {
+    if (SV.folder && g.folder !== SV.folder) continue;
+    const d = by.get(g.day) || { photos: 0, videos: 0 };
+    d.photos += g.photos;
+    d.videos += g.videos;
+    by.set(g.day, d);
+  }
+  return [...by.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([day, v]) => ({ day, ...v, n: v.photos + v.videos }));
+}
+
+function selectedDays() {
+  return SV.days.filter((d) => (!SV.from || d.day >= SV.from) && (!SV.to || d.day <= SV.to));
+}
+
+function renderSurvey() {
+  SV.days = surveyDays();
+  document.querySelectorAll('#survey-folders .chip').forEach((c) => c.classList.toggle('on', c.dataset.folder === SV.folder));
+  drawSurveyChart();
+  const sel = selectedDays();
+  const photos = sel.reduce((a, d) => a + d.photos, 0);
+  const videos = sel.reduce((a, d) => a + d.videos, 0);
+  let range = 'All days';
+  if (SV.from || SV.to) {
+    const a = SV.from || SV.days[0]?.day;
+    const b = SV.to || SV.days.at(-1)?.day;
+    range = a === b ? niceDay(a) : `${niceDay(a, a.slice(0, 4) !== b.slice(0, 4))} – ${niceDay(b)}`;
+  }
+  const parts = [range, `${fmtN(photos)} photo${photos === 1 ? '' : 's'}`];
+  if (videos) parts.push(`${fmtN(videos)} video${videos === 1 ? '' : 's'}`);
+  $('#survey-sel').textContent = parts.join(' · ');
+  $('#survey-open').textContent = `Open ${fmtN(photos + videos)}`;
+  $('#survey-open').disabled = photos + videos === 0;
+  document.querySelectorAll('#survey-quick button').forEach((b) => b.classList.toggle('on', b.dataset.q === 'all' && !SV.from && !SV.to));
+}
+
+/* Shots per day as a strip of bars on a true time axis (empty days are
+   gaps, not squeezed out). Selected days in ink, the rest recede. */
+function drawSurveyChart() {
+  const svg = $('#survey-chart');
+  const W = svg.clientWidth || 600;
+  const H = 72;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H + 22}`);
+  svg.innerHTML = '';
+  const days = SV.days;
+  if (!days.length) return;
+  const t0 = parseDay(days[0].day);
+  const t1 = parseDay(days.at(-1).day);
+  const n = Math.round((t1 - t0) / dayMs) + 1;
+  const step = W / n;
+  const bw = Math.max(1, Math.min(14, step * 0.7));
+  const max = Math.max(...days.map((d) => d.n));
+  const NS = 'http://www.w3.org/2000/svg';
+  const mk = (tag, attrs, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    svg.append(e);
+    return e;
+  };
+  SV.geom = { t0, n, step, W };
+  const inSel = (d) => (!SV.from || d >= SV.from) && (!SV.to || d <= SV.to);
+  for (const d of days) {
+    const i = Math.round((parseDay(d.day) - t0) / dayMs);
+    const h = Math.max(1.5, (d.n / max) * H);
+    const x = i * step + (step - bw) / 2;
+    const r = mk('rect', { x: x.toFixed(2), y: (H - h).toFixed(2), width: bw.toFixed(2), height: h.toFixed(2), class: inSel(d.day) ? 'bar on' : 'bar' });
+    r.append(Object.assign(document.createElementNS(NS, 'title'), { textContent: `${niceDay(d.day)}: ${fmtN(d.n)}` }));
+  }
+  // baseline, the tallest day labelled directly, and sparse date labels
+  mk('line', { x1: 0, x2: W, y1: H + 0.5, y2: H + 0.5, class: 'base' });
+  const top = days.reduce((a, d) => (d.n > a.n ? d : a));
+  const ti = Math.round((parseDay(top.day) - t0) / dayMs);
+  const tx = clamp(ti * step + step / 2, 14, W - 14);
+  mk('text', { x: tx, y: Math.max(9, H - (top.n / max) * H - 4), class: 'peak', 'text-anchor': 'middle' }, fmtN(top.n));
+  const labels = [];
+  labels.push({ i: 0, text: niceDay(days[0].day), anchor: 'start' });
+  if (n > 1) labels.push({ i: n - 1, text: niceDay(days.at(-1).day), anchor: 'end' });
+  if (n > 45) {
+    // month starts in between
+    for (let i = 1; i < n - 1; i++) {
+      const d = fmtDayUTC(t0 + i * dayMs);
+      if (d.endsWith('-01')) labels.push({ i, text: MONTHS[+d.slice(5, 7) - 1] + (d.slice(5, 7) === '01' ? ' ' + d.slice(0, 4) : ''), anchor: 'middle', tick: true });
+    }
+  }
+  let lastRight = -Infinity;
+  for (const l of labels.sort((a, b) => a.i - b.i)) {
+    const x = l.anchor === 'start' ? 0 : l.anchor === 'end' ? W : l.i * step;
+    const est = l.text.length * 6;
+    const left = l.anchor === 'start' ? x : l.anchor === 'end' ? x - est : x - est / 2;
+    if (left < lastRight + 8 && l.anchor !== 'end') continue;
+    if (l.tick) mk('line', { x1: x, x2: x, y1: H + 1, y2: H + 5, class: 'tick' });
+    mk('text', { x, y: H + 17, 'text-anchor': l.anchor, class: 'axis' }, l.text);
+    lastRight = left + est;
+  }
+}
+
+function chartDayAt(clientX) {
+  const svg = $('#survey-chart');
+  const g = SV.geom;
+  if (!g) return null;
+  const r = svg.getBoundingClientRect();
+  const x = ((clientX - r.left) / r.width) * g.W;
+  const i = clamp(Math.floor(x / g.step), 0, g.n - 1);
+  return fmtDayUTC(g.t0 + i * dayMs);
+}
+
+function setRange(a, b) {
+  if (a && b && a > b) [a, b] = [b, a];
+  const whole = !a || !b || (a <= SV.days[0]?.day && b >= SV.days.at(-1)?.day);
+  SV.from = whole ? null : a;
+  SV.to = whole ? null : b;
+  renderSurvey();
+}
+
+function quickRange(q) {
+  const days = SV.days;
+  if (!days.length) return;
+  const last = days.at(-1).day;
+  if (q === 'all') setRange(null, null);
+  else if (q === 'last') setRange(last, last);
+  else if (q === 'week') setRange(fmtDayUTC(parseDay(last) - 6 * dayMs), last);
+}
+
+function bindSurvey() {
+  const svg = $('#survey-chart');
+  svg.addEventListener('pointerdown', (e) => {
+    const d = chartDayAt(e.clientX);
+    if (!d) return;
+    svg.setPointerCapture(e.pointerId);
+    SV.drag = e.shiftKey && (SV.from || SV.to) ? SV.from || SV.to : d;
+    setRange(SV.drag, d);
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (SV.drag == null) return;
+    const d = chartDayAt(e.clientX);
+    if (d) setRange(SV.drag, d);
+  });
+  const end = () => (SV.drag = null);
+  svg.addEventListener('pointerup', end);
+  svg.addEventListener('pointercancel', end);
+  svg.addEventListener('dblclick', () => setRange(null, null));
+  $('#survey-quick').onclick = (e) => e.target.dataset.q && quickRange(e.target.dataset.q);
+  $('#survey-open').onclick = () => openScoped();
+  $('#survey-back').onclick = () => {
+    surveyToken++;
+    $('#survey').hidden = true;
+    showWelcome();
+  };
+}
+
+let openToken = 0;
+async function openScoped() {
+  if (!SV.data) return;
+  const token = ++openToken;
+  const status = $('#survey-status');
+  const scope = { folder: SV.folder || null, from: SV.from, to: SV.to };
+  $('#survey-open').disabled = true;
+  status.textContent = 'Reading…';
   let polling = true;
   (async function poll() {
-    while (polling) {
+    while (polling && token === openToken) {
       await new Promise((r) => setTimeout(r, 200));
       const p = await api('GET', '/api/progress').catch(() => null);
-      if (polling && p && p.total) status.textContent = `Reading ${p.done} of ${p.total} files`;
+      if (polling && token === openToken && p && p.total) {
+        status.textContent = `Reading ${fmtN(Math.min(p.done, p.total))} of ${fmtN(p.total)} files`;
+      }
     }
   })();
   try {
-    const lib = await api('POST', '/api/open', { path });
+    const lib = await api('POST', '/api/open', { path: SV.data.root, ...scope });
+    if (token !== openToken) return; // a newer open replaced this one
     polling = false;
     status.textContent = '';
     S.server.lastRoot = lib.root;
+    $('#survey').hidden = true;
     loadLibrary(lib);
   } catch (e) {
     polling = false;
-    status.textContent = e.message;
+    if (token === openToken) status.textContent = e.message;
+  } finally {
+    if (token === openToken) $('#survey-open').disabled = false;
   }
+}
+
+function scopeLabel(lib) {
+  const sc = lib.scope || {};
+  const name = lib.root.split(/[\\/]/).filter(Boolean).pop() || lib.root;
+  const parts = [name];
+  if (sc.folder) parts.push(sc.folder.split('/').pop());
+  if (sc.from || sc.to) {
+    const a = sc.from || '…';
+    const b = sc.to || '…';
+    parts.push(a === b ? niceDay(a) : `${a === '…' ? a : niceDay(a, false)} – ${b === '…' ? b : niceDay(b)}`);
+  }
+  return parts.join(' · ');
 }
 
 function loadLibrary(lib) {
@@ -120,18 +366,21 @@ function loadLibrary(lib) {
   applyFilter(false);
   let saved = 0;
   try {
-    saved = Number(localStorage.getItem('brackit:idx:' + lib.root)) || 0;
+    saved = Number(localStorage.getItem(idxKey())) || 0;
   } catch {}
   S.idx = clamp(saved, 0, Math.max(0, S.view.length - 1));
   $('#welcome').hidden = true;
+  $('#survey').hidden = true;
   $('#viewer').hidden = false;
   $('#bar .center').hidden = false;
   $('#staged-btn').hidden = $('#fs-btn').hidden = false;
-  $('#folder').textContent = lib.root;
-  $('#folder').title = lib.root + ' — open another (O)';
+  $('#folder').textContent = scopeLabel(lib);
+  $('#folder').title = lib.root + ' — choose another card, folder or dates (O)';
   render();
   updateFlagsUi();
 }
+
+const idxKey = () => 'brackit:idx:' + S.lib.root + '|' + JSON.stringify(S.lib.scope || {});
 
 function applyFilter(keep = true) {
   const current = keep ? S.view[S.idx] : null;
@@ -339,7 +588,7 @@ function render() {
     return;
   }
   try {
-    localStorage.setItem('brackit:idx:' + S.lib.root, S.idx);
+    localStorage.setItem(idxKey(), S.idx);
   } catch {}
   $('#counter').innerHTML = `<b>${S.idx + 1}</b> / ${S.view.length}`;
   $('#set-date').textContent = fmtDate(set.dateTime);
@@ -1094,7 +1343,8 @@ function bindUi() {
     const v = $('#path-input').value.trim();
     if (v) openFolder(v);
   };
-  $('#folder').onclick = () => showWelcome();
+  $('#folder').onclick = () => (S.lib ? openFolder(S.lib.root) : showWelcome());
+  bindSurvey();
   $('#staged-btn').onclick = () => openStaged();
   $('#fs-btn').onclick = toggleFullscreen;
   $('#help-btn').onclick = () => ($('#help').hidden = !$('#help').hidden);
@@ -1181,6 +1431,7 @@ function bindUi() {
         }
       }
       drawTicks();
+      if (!$('#survey').hidden) drawSurveyChart();
       if (S.editor) layoutEditor();
       else if (!$('#viewer').hidden) render();
     }, 80);
@@ -1223,6 +1474,17 @@ function onKey(e) {
   if (!$('#staged').hidden) {
     if (k === 'Escape' || k === 's' || k === 'S') closeStaged();
     else if (k === 'Enter') doExport();
+    else if (k === 'f' || k === 'F') toggleFullscreen();
+    else return;
+    return e.preventDefault();
+  }
+
+  if (!$('#survey').hidden) {
+    if (k === 'Enter') openScoped();
+    else if (k === 'Escape') $('#survey-back').click();
+    else if (k === 'a' || k === 'A') quickRange('all');
+    else if (k === 'l' || k === 'L') quickRange('last');
+    else if (k === 'w' || k === 'W') quickRange('week');
     else if (k === 'f' || k === 'F') toggleFullscreen();
     else return;
     return e.preventDefault();
@@ -1337,7 +1599,7 @@ function onKey(e) {
     case 'o':
     case 'O':
       if (S.solo) closeSolo();
-      showWelcome();
+      openFolder(S.lib.root);
       break;
     default:
       return;

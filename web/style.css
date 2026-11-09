@@ -260,3 +260,32 @@ body.fs .look .caption { opacity: .75; }
 #toast .toast-action { color: var(--accent); }
 #toast .toast-action:hover { text-decoration: underline; }
 #bar .center[hidden] { display: block !important; visibility: hidden; } /* keep the grid columns stable */
+
+/* ---------- survey: choose a folder and/or date range before loading ---------- */
+#survey { position: fixed; inset: 0; display: grid; place-items: center; }
+.survey-inner { width: min(860px, 90vw); }
+.survey-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+.survey-head h1 { font-weight: 400; font-size: 24px; margin: 0; }
+.survey-row { margin-bottom: 26px; }
+.survey-label { color: var(--ink); margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; }
+.survey-label .quick { margin-left: auto; display: flex; gap: 14px; }
+.quick button { color: var(--muted); }
+.quick button:hover, .quick button.on { color: var(--ink); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.chip { color: var(--muted); padding: 2px 0; border-bottom: 1px solid transparent; }
+.chip .n { margin-left: 6px; font-size: 11px; color: var(--faint); }
+.chip:hover { color: var(--ink); }
+.chip.on { color: var(--ink); border-bottom-color: var(--ink); }
+.chip.on .n { color: var(--muted); }
+#survey-chart { width: 100%; height: 94px; display: block; cursor: crosshair; touch-action: none; overflow: visible; }
+#survey-chart .bar { fill: var(--faint); }
+#survey-chart .bar.on { fill: var(--ink); }
+#survey-chart .base { stroke: var(--hair); stroke-width: 1; }
+#survey-chart .tick { stroke: var(--faint); stroke-width: 1; }
+#survey-chart text { font: 10.5px var(--font); font-feature-settings: "tnum" 1; }
+#survey-chart .axis { fill: var(--muted); }
+#survey-chart .peak { fill: var(--muted); }
+.survey-foot { display: flex; align-items: center; gap: 16px; padding-top: 14px; border-top: 1px solid var(--hair); }
+#survey-sel { color: var(--ink); }
+#survey-status { margin-left: auto; }
+#survey-open { margin-left: 0; }

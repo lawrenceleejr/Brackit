@@ -291,6 +291,15 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             let body = summary(&app.lib.read().unwrap());
             send_json(req, 200, body)
         }
+        ("/api/survey", _, true, _) => {
+            let body = read_json(&mut req);
+            let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "Folder not found") };
+            let p = fs::canonicalize(&p).unwrap_or(p);
+            if !p.is_dir() {
+                return err(req, 400, "Folder not found");
+            }
+            send_json(req, 200, library::survey(&p))
+        }
         ("/api/open", _, true, _) => {
             let body = read_json(&mut req);
             let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "Folder not found") };
@@ -298,10 +307,14 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             if !p.is_dir() {
                 return err(req, 400, "Folder not found");
             }
+            let s = |k: &str| body.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
+            let scope = library::Scope { folder: s("folder"), from: s("from"), to: s("to") };
             // leftovers from a session that quit mid-undo window: finish that delete
             let _ = fs::remove_dir_all(p.join(TRASH));
             app.progress.scanning.store(true, Ordering::SeqCst);
-            let lib = library::scan(&p, &app.progress);
+            let Some(lib) = library::scan(&p, &scope, &app.progress) else {
+                return err(req, 409, "superseded by a newer scan");
+            };
             app.progress.scanning.store(false, Ordering::SeqCst);
             let body = summary(&lib);
             *app.lib.write().unwrap() = lib;
@@ -386,6 +399,7 @@ fn summary(lib: &Library) -> Value {
         lib.photos.iter().map(|(id, p)| (id.clone(), serde_json::to_value(p.public()).unwrap_or(Value::Null))).collect();
     json!({
         "root": lib.root.as_ref().map(|r| r.to_string_lossy()),
+        "scope": { "folder": lib.scope.folder, "from": lib.scope.from, "to": lib.scope.to },
         "sets": lib.sets,
         "photos": photos,
     })
