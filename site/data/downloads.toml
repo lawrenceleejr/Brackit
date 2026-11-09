@@ -1,0 +1,21 @@
+# Release assets have fixed names, so these links always get the latest build.
+[[item]]
+  os = "mac"
+  label = "macOS · Apple silicon"
+  file = "Brackit-macOS-AppleSilicon.dmg"
+  note = "First launch: right-click the app, choose Open, then Open."
+[[item]]
+  os = "mac-intel"
+  label = "macOS · Intel"
+  file = "Brackit-macOS-Intel.dmg"
+  note = "Same first-launch step as above."
+[[item]]
+  os = "windows"
+  label = "Windows"
+  file = "Brackit-Windows-Setup.exe"
+  note = "If SmartScreen appears: More info, then Run anyway."
+[[item]]
+  os = "linux"
+  label = "Linux"
+  file = "Brackit-Linux.AppImage"
+  note = "Make it executable (chmod +x), then run it."

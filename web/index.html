@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brackit</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="bar">
+    <div class="left">
+      <span class="mark">Brackit</span>
+      <button id="folder" class="link" title="Open another folder (O)"></button>
+    </div>
+    <div class="center"><span id="counter"></span></div>
+    <div class="right">
+      <button id="eject-btn" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
+      <button id="lib-btn" class="link" title="Library of the export folder (L)">Library</button>
+      <button id="ov-btn" class="link" title="Overview of all sets (G)">Overview</button>
+      <button id="staged-btn" class="link" title="Your picks (S); E exports them">Picks <span id="staged-count" class="num">0</span></button>
+      <button id="fs-btn" class="link" title="Full screen (F)">Full screen</button>
+      <button id="menu-btn" class="link" title="All tools">Menu</button>
+      <button id="help-btn" class="link" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    </div>
+  </header>
+
+  <main id="welcome" hidden>
+    <div class="welcome-inner">
+      <h1>Brackit</h1>
+      <p class="lede">Film-simulation brackets, side by side.</p>
+      <div id="volumes"></div>
+      <div class="actions">
+        <button id="choose" class="btn">Choose folder…</button>
+      </div>
+      <form id="path-form" class="path-form">
+        <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="/Volumes/Untitled">
+        <button class="btn quiet" type="submit">Open</button>
+      </form>
+      <div id="scan-status" class="muted"></div>
+    </div>
+  </main>
+
+  <main id="survey" hidden>
+    <div class="survey-inner">
+      <div class="survey-head">
+        <h1 id="survey-name"></h1>
+        <span class="survey-head-actions">
+          <button id="survey-return" class="link" title="Back to the photos you had open (Esc)" hidden>Back to photos</button>
+          <button id="survey-eject" class="link" title="Eject the card (⌘E)" hidden>⏏ Eject</button>
+          <button id="survey-back" class="link">Other card</button>
+        </span>
+      </div>
+      <div id="survey-folders-row" class="survey-row">
+        <div class="survey-label">Folder</div>
+        <div id="survey-folders" class="chips"></div>
+      </div>
+      <div class="survey-row">
+        <div class="survey-label">
+          Shots per day <span class="muted">— drag to choose a range</span>
+          <span id="survey-quick" class="quick"><button data-q="new" hidden></button><button data-q="all">All</button><button data-q="last">Last day</button><button data-q="week">Last 7 days</button></span>
+        </div>
+        <svg id="survey-chart" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="survey-foot">
+        <span id="survey-sel"></span>
+        <span id="survey-status" class="muted"></span>
+        <button id="survey-open" class="btn primary">Open</button>
+      </div>
+    </div>
+  </main>
+
+  <main id="viewer" hidden>
+    <section id="stage"></section>
+    <footer id="index">
+      <div id="index-meta"><span id="set-date"></span><span id="set-files" class="muted"></span></div>
+      <canvas id="ticks" height="22"></canvas>
+      <div id="peek" hidden><div class="peek-img"></div><div class="peek-cap"></div></div>
+    </footer>
+  </main>
+
+  <section id="overview" hidden>
+    <div id="ov-grid"></div>
+  </section>
+
+  <section id="solo" hidden>
+    <div id="solo-frame"></div>
+    <div id="solo-info" hidden></div>
+    <div id="solo-caption" class="caption"></div>
+  </section>
+
+  <section id="editor" hidden>
+    <div id="editor-area">
+      <div id="editor-wrap">
+        <canvas id="editor-canvas"></canvas>
+        <div id="crop-box">
+          <div class="thirds"></div>
+          <div class="h nw" data-h="nw"></div><div class="h n" data-h="n"></div><div class="h ne" data-h="ne"></div>
+          <div class="h e" data-h="e"></div><div class="h se" data-h="se"></div><div class="h s" data-h="s"></div>
+          <div class="h sw" data-h="sw"></div><div class="h w" data-h="w"></div>
+        </div>
+      </div>
+    </div>
+    <div id="editor-controls">
+      <div class="straighten">
+        <span class="label muted">Straighten</span>
+        <input id="angle" type="range" min="-15" max="15" step="0.05" value="0">
+        <span id="angle-val" class="num">0.0°</span>
+      </div>
+      <div id="aspects" class="aspects">
+        <button data-a="free" class="on">Free</button>
+        <button data-a="orig">Original</button>
+        <button data-a="1">1:1</button>
+        <button data-a="1.25">4:5</button>
+        <button data-a="1.7778">16:9</button>
+        <button data-a="2.39">2.39:1</button>
+      </div>
+      <div class="editor-actions">
+        <button id="edit-reset" class="btn quiet">Reset</button>
+        <button id="edit-cancel" class="btn quiet">Cancel</button>
+        <button id="edit-done" class="btn primary">Done</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="staged" hidden>
+    <div class="staged-head">
+      <div>
+        <h2>Picks</h2>
+        <div id="staged-summary" class="muted"></div>
+      </div>
+      <div class="staged-actions">
+        <label id="raw-opt" class="raw-opt" title="Also copy the RAW (.RAF) file for each photo that has one"><input type="checkbox" id="with-raw"> Include RAW <span id="raw-count" class="muted"></span></label>
+        <span class="muted">to</span>
+        <button id="dest" class="link dest" title="Change destination"></button>
+        <button id="clear-flags" class="btn quiet">Clear</button>
+        <button id="export" class="btn primary">Export</button>
+        <button id="staged-close" class="link close" title="Close (Esc)" aria-label="Close picks">×</button>
+      </div>
+    </div>
+    <div id="export-progress"><div></div></div>
+    <div id="export-result" class="muted"></div>
+    <div id="staged-scroll">
+      <div id="staged-grid"></div>
+      <div id="dest-head"></div>
+      <div id="dest-grid"></div>
+    </div>
+  </section>
+
+  <section id="help" hidden>
+    <div class="help-inner">
+      <h2>Keys</h2>
+      <dl>
+        <dt>← →</dt><dd>previous / next set</dd>
+        <dt>⇧ ← →</dt><dd>jump ten sets</dd>
+        <dt>1 2 3</dt><dd>pick that look (in the large view: show it)</dd>
+        <dt>⌘ 1 2 3</dt><dd>add / remove a look (pick several)</dd>
+        <dt>0</dt><dd>unstage this set</dd>
+        <dt>⌘ ⌫</dt><dd>delete every version from the card (⌘Z undoes, 10 s)</dd>
+        <dt>space</dt><dd>inspect the pick full screen; 1 2 3 switch looks</dd>
+        <dt>click</dt><dd>view one look large</dd>
+        <dt>↑ ↓</dt><dd>cycle looks (large view)</dd>
+        <dt>Z</dt><dd>actual pixels (large view)</dd>
+        <dt>C</dt><dd>straighten &amp; crop (applies to all looks of the shot)</dd>
+        <dt>I</dt><dd>camera settings &amp; film recipe</dd>
+        <dt>H</dt><dd>histogram</dd>
+        <dt>`</dt><dd>loupe (scroll to zoom)</dd>
+        <dt>J</dt><dd>clipping: red blown, blue crushed</dd>
+        <dt>A</dt><dd>annotations: focus point, faces</dd>
+        <dt>L</dt><dd>library of the export folder (0–5 stars, P flag)</dd>
+        <dt>[ ]</dt><dd>rotate 0.1° (⇧ 1°) while cropping</dd>
+        <dt>space</dt><dd>play / pause (video)</dd>
+        <dt>F</dt><dd>full screen</dd>
+        <dt>S</dt><dd>your picks</dd>
+        <dt>E</dt><dd>export your picks</dd>
+        <dt>Home End</dt><dd>first / last set</dd>
+        <dt>B</dt><dd>brackets only / all photos</dd>
+        <dt>U</dt><dd>next set with nothing picked</dd>
+        <dt>G</dt><dd>overview: thumbnails of every set</dd>
+        <dt>O</dt><dd>open another folder</dd>
+        <dt>⌘ E</dt><dd>eject the card</dd>
+        <dt>Esc</dt><dd>back</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section id="library" hidden>
+    <div class="lib-head">
+      <div>
+        <h2>Library</h2>
+        <div class="muted"><button id="lib-path" class="link dest" title="Show another folder"></button> <span id="lib-summary"></span></div>
+      </div>
+      <button id="lib-close" class="link close" title="Close (Esc or L)" aria-label="Close library">×</button>
+    </div>
+    <div id="lib-filters" class="chips"></div>
+    <div class="lib-body">
+      <nav id="lib-folders" aria-label="Folders"></nav>
+      <div id="lib-grid"></div>
+      <aside id="lib-detail" aria-label="Details"></aside>
+    </div>
+    <div id="lib-view" hidden>
+      <div id="lib-view-frame"></div>
+      <div id="lib-view-caption" class="caption"></div>
+    </div>
+  </section>
+
+  <div id="loupe" hidden aria-hidden="true"><canvas></canvas><span class="loupe-zoom"></span></div>
+  <div id="menu" hidden></div>
+  <div id="toast" hidden></div>
+  <script src="app.js"></script>
+  <script src="tools.js"></script>
+  <script src="library.js"></script>
+</body>
+</html>

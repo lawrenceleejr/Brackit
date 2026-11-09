@@ -1,0 +1,51 @@
+/* Same palette and type as the app: the photos are the content. */
+:root {
+  --bg: #0d0d0c;
+  --ink: #e9e6df;
+  --muted: #8e8a82;
+  --faint: #3a3936;
+  --hair: #24231f;
+  --accent: #f0a640;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); color: var(--ink); }
+body { margin: 0; font: 17px/1.6 var(--font); -webkit-font-smoothing: antialiased; }
+a { color: var(--ink); text-decoration-color: var(--faint); text-underline-offset: 3px; }
+a:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+.hero { max-width: 44rem; margin: 0 auto; padding: 72px 24px 32px; }
+.mark { margin: 0 0 18px; color: var(--muted); font-size: 12px; letter-spacing: .16em; text-transform: uppercase; }
+.hero h1 { margin: 0; font-weight: 400; font-size: clamp(26px, 4vw, 38px); line-height: 1.25; letter-spacing: -.01em; }
+
+.shot { margin: 24px auto 48px; max-width: 1200px; padding: 0 24px; }
+.shot img { width: 100%; height: auto; display: block; border-radius: 4px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.shot figcaption { color: var(--muted); font-size: 14px; margin-top: 12px; }
+.shot.inline { padding: 0; margin: 36px 0; }
+
+.text { max-width: 36rem; margin: 0 auto; padding: 0 24px 40px; }
+.text h2 { font-weight: 400; font-size: 22px; margin: 48px 0 12px; }
+.text p, .text li { color: #d5d1c9; }
+.text strong { color: var(--ink); font-weight: 500; }
+.text ol, .text ul { padding-left: 1.2em; }
+.text li { margin: 6px 0; }
+.small { font-size: 14px; color: var(--muted) !important; }
+
+.download { margin-top: 56px; padding-top: 8px; border-top: 1px solid var(--hair); }
+.dl { list-style: none; padding: 0; margin: 16px 0; }
+.dl li { display: grid; grid-template-columns: 13rem 1fr; gap: 4px 16px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--hair); }
+.dl-link { text-decoration: none; }
+.dl-link::after { content: " ↓"; color: var(--muted); }
+.dl-note { color: var(--muted); font-size: 14px; }
+.dl li.here .dl-link { color: var(--accent); }
+.dl li.here .dl-link::after { color: var(--accent); }
+
+.foot { max-width: 36rem; margin: 0 auto; padding: 24px 24px 64px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--hair); }
+
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  .hero { padding-top: 48px; }
+  .dl li { grid-template-columns: 1fr; }
+}
+.get { margin: 22px 0 0; color: var(--muted); font-size: 15px; }
+.get a:first-child { color: var(--accent); text-decoration-color: rgba(240,166,64,.4); }

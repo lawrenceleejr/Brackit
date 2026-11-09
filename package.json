@@ -1,0 +1,23 @@
+{
+  "name": "brackit",
+  "productName": "Brackit",
+  "version": "0.1.0",
+  "description": "Review Fujifilm film-simulation brackets side by side and pick the look you want.",
+  "license": "MIT",
+  "author": "Lawrence Lee",
+  "repository": "github:lawrenceleejr/brackit",
+  "scripts": {
+    "build:cli": "cargo build --release --no-default-features --manifest-path src-tauri/Cargo.toml",
+    "start": "cargo run --release --no-default-features --manifest-path src-tauri/Cargo.toml -- --serve",
+    "app": "tauri dev",
+    "test": "node --test test/*.test.js",
+    "dist": "tauri build",
+    "tauri": "tauri",
+    "test:ui": "node --test --test-concurrency=1 test/ui/*.test.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "playwright": "^1.63.0"
+  },
+  "private": true
+}
