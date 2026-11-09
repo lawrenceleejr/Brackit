@@ -150,7 +150,10 @@ async function openLite(contextOptions = {}) {
     }).observe({ type: 'event', durationThreshold: 0, buffered: true });
   });
   await page.goto(liteBase + '/');
-  await page.waitForSelector('#welcome:not([hidden])');
+  await page.waitForSelector('#welcome:not([hidden])', { timeout: 10000 }).catch(async (e) => {
+    console.log('  no start screen:', JSON.stringify(errors), await page.evaluate(() => [document.body.className, document.body.innerText.slice(0, 300), typeof BrackitLite, typeof S === 'undefined' ? 'no S' : JSON.stringify(S.server)]));
+    throw e;
+  });
   return { ctx, page, errors };
 }
 

@@ -3403,6 +3403,12 @@ function onKey(e) {
   e.preventDefault();
 }
 
-boot().catch((e) => {
-  document.body.textContent = 'Brackit could not start: ' + e.message;
-});
+// Start once every script on the page has run (tools.js and library.js come
+// after this one; Brackit Lite answers the first request instantly).
+function start() {
+  boot().catch((e) => {
+    document.body.textContent = 'Brackit could not start: ' + e.message;
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+else start();
