@@ -142,5 +142,5 @@ npm run build:cli && npm test && npm run test:ui
 ```
 
 `test:ui` checks that flipping stays under 50 ms per key press. See
-`CLAUDE.md` for notes on working on the code. Pushing a tag like `v1.0.0`
+`CLAUDE.md` for notes on working on the code. Pushing a tag like `v0.1.0`
 builds every platform and publishes a release.
