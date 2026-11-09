@@ -910,6 +910,45 @@ function drawTicks() {
   ctx.fillRect(x - (tw < 2 ? 0 : 0), 0, Math.max(tw, 1.5), h);
 }
 
+/* ------------------------------------------------------------ timeline hover preview */
+
+// Hovering the tick strip shows that set's embedded header thumbnail (the
+// pick if there is one), its position and capture time.
+let peekIdx = -1;
+function peekAt(e) {
+  const c = $('#ticks');
+  const r = c.getBoundingClientRect();
+  const n = S.view.length;
+  if (!n) return;
+  const i = clamp(Math.floor(((e.clientX - r.left) / r.width) * n), 0, n - 1);
+  const peek = $('#peek');
+  const host = $('#index').getBoundingClientRect();
+  const W = 168;
+  peek.style.left = `${clamp(e.clientX - host.left - W / 2, 0, host.width - W)}px`;
+  peek.hidden = false;
+  if (i === peekIdx) return;
+  peekIdx = i;
+  const set = S.view[i];
+  const shown = photo(set.photos[selectedPos(set) ?? 0]);
+  const box = peek.querySelector('.peek-img');
+  box.replaceChildren();
+  const dt = (set.dateTime || '').match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}:\d{2})/);
+  const when = dt ? `${+dt[3]} ${MONTHS[+dt[2] - 1]} ${dt[4]}` : '';
+  peek.querySelector('.peek-cap').textContent = `${fmtN(i + 1)}${when ? ' · ' + when : ''}`;
+  peek.classList.toggle('picked', selectedPos(set) != null);
+  if (set.kind === 'video') {
+    box.append(el('span', 'peek-video', '▶'));
+    return;
+  }
+  const entry = getImage(thumbUrl(shown.id), 0.5);
+  const put = (img) => {
+    if (peekIdx !== i || !img.naturalWidth) return;
+    box.replaceChildren(img.cloneNode());
+  };
+  if (entry.done) put(entry.img);
+  else entry.promise.then(put);
+}
+
 /* ------------------------------------------------------------ overview (thumbnail grid) */
 
 /* Every set as a small tile, grouped by day, for scrolling around a card
@@ -1799,7 +1838,13 @@ function bindUi() {
   $('#ticks').onclick = (e) => {
     const r = e.target.getBoundingClientRect();
     S.idx = clamp(Math.floor(((e.clientX - r.left) / r.width) * S.view.length), 0, S.view.length - 1);
+    $('#peek').hidden = true;
     render();
+  };
+  $('#ticks').onmousemove = (e) => peekAt(e);
+  $('#ticks').onmouseleave = () => {
+    $('#peek').hidden = true;
+    peekIdx = -1;
   };
   $('#solo-frame').onclick = (e) => toggleZoom(e);
   $('#solo-frame').onmousemove = (e) => {
