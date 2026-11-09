@@ -879,35 +879,84 @@ function nextUnflagged() {
 }
 
 /* index: one hairline tick per set. Flagged sets stand taller, in the accent. */
+/* The canvas is taller than the strip (BULGE px of headroom above the
+   22 px baseline area) so hovered ticks can swell upward over the page. */
+const TICK_H = 22;
+const BULGE = 26;
+// hover state: `strength` eases 0↔1, `fx` follows the mouse (canvas px)
+const TL = { strength: 0, target: 0, fx: 0, mx: 0, raf: 0 };
+
+// Fisheye (Sarkar–Brown): spreads ticks near the focus, compresses the rest.
+function fisheye(x, fx, w, d) {
+  if (d <= 0) return x;
+  const left = x < fx;
+  const span = left ? fx : w - fx;
+  if (span <= 0) return x;
+  const t = Math.abs(x - fx) / span;
+  const g = ((d + 1) * t) / (d * t + 1);
+  return left ? fx - g * span : fx + g * span;
+}
+
 function drawTicks() {
   const c = $('#ticks');
   const w = c.clientWidth;
-  const h = 22;
+  const H = TICK_H + BULGE;
   if (!w) return;
-  c.width = Math.round(w * dpr());
-  c.height = Math.round(h * dpr());
+  if (c.width !== Math.round(w * dpr()) || c.height !== Math.round(H * dpr())) {
+    c.width = Math.round(w * dpr());
+    c.height = Math.round(H * dpr());
+  }
   const ctx = c.getContext('2d');
-  ctx.scale(dpr(), dpr());
-  ctx.clearRect(0, 0, w, h);
+  ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+  ctx.clearRect(0, 0, w, H);
   const n = S.view.length;
   if (!n) return;
   const step = w / n;
-  const tw = Math.max(1, Math.min(2, step - 1));
   const css = getComputedStyle(document.documentElement);
   const faint = css.getPropertyValue('--tick').trim();
   const accent = css.getPropertyValue('--accent').trim();
   const ink = css.getPropertyValue('--ink').trim();
+  const s = TL.strength;
+  const d = 3 * s; // fisheye distortion
+  const sigma = 36; // px: how wide the bulge is
+  const geom = (i) => {
+    const x0 = fisheye(i * step, TL.fx, w, d);
+    const x1 = fisheye((i + 1) * step, TL.fx, w, d);
+    const mid = (x0 + x1) / 2;
+    const dx = mid - TL.fx;
+    const lift = s * Math.exp(-(dx * dx) / (2 * sigma * sigma)); // 0..1
+    const tw = Math.max(1, Math.min(2 + 4 * lift, x1 - x0 - 1));
+    return { x: mid - tw / 2, tw, lift };
+  };
   for (let i = 0; i < n; i++) {
     const set = S.view[i];
     const flagged = set.photos.some((id) => S.flags.has(photo(id).key));
-    const x = Math.floor(i * step + (step - tw) / 2);
+    const base = flagged ? 13 : set.kind === 'video' ? 9 : 6;
+    const { x, tw, lift } = geom(i);
+    const th = base * (1 + 1.6 * lift);
     ctx.fillStyle = flagged ? accent : faint;
-    const th = flagged ? 13 : set.kind === 'video' ? 9 : 6;
-    ctx.fillRect(x, h - th, tw, th);
+    ctx.globalAlpha = flagged ? 1 : 0.85 + 0.15 * lift;
+    ctx.fillRect(x, H - th, tw, th);
   }
-  const x = Math.floor(S.idx * step + (step - tw) / 2);
+  ctx.globalAlpha = 1;
+  // the current set: a full-height ink line (taller when bulged)
+  const cur = geom(S.idx);
   ctx.fillStyle = ink;
-  ctx.fillRect(x - (tw < 2 ? 0 : 0), 0, Math.max(tw, 1.5), h);
+  ctx.fillRect(cur.x, H - TICK_H * (1 + 0.9 * cur.lift), Math.max(cur.tw, 1.5), TICK_H * (1 + 0.9 * cur.lift));
+}
+
+function animateTimeline() {
+  if (TL.raf) return;
+  const tick = () => {
+    TL.strength += (TL.target - TL.strength) * 0.22;
+    TL.fx += (TL.mx - TL.fx) * 0.35;
+    if (Math.abs(TL.target - TL.strength) < 0.01) TL.strength = TL.target;
+    if (Math.abs(TL.mx - TL.fx) < 0.5) TL.fx = TL.mx;
+    drawTicks();
+    const moving = TL.strength !== TL.target || TL.fx !== TL.mx;
+    TL.raf = moving ? requestAnimationFrame(tick) : 0;
+  };
+  TL.raf = requestAnimationFrame(tick);
 }
 
 /* ------------------------------------------------------------ timeline hover preview */
@@ -1841,10 +1890,21 @@ function bindUi() {
     $('#peek').hidden = true;
     render();
   };
-  $('#ticks').onmousemove = (e) => peekAt(e);
+  $('#ticks').onmousemove = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    TL.mx = e.clientX - r.left;
+    if (TL.target === 0) {
+      if (TL.strength === 0) TL.fx = TL.mx; // bulge appears under the cursor
+      TL.target = 1;
+    }
+    animateTimeline();
+    peekAt(e);
+  };
   $('#ticks').onmouseleave = () => {
     $('#peek').hidden = true;
     peekIdx = -1;
+    TL.target = 0;
+    animateTimeline();
   };
   $('#solo-frame').onclick = (e) => toggleZoom(e);
   $('#solo-frame').onmousemove = (e) => {
