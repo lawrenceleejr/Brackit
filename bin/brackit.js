@@ -26,6 +26,10 @@ usage: brackit [folder] [--port 4870] [--no-open]
   process.exit(0);
 }
 
+// make ctrl-c run 'exit' handlers (finishes any pending card deletions)
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
+
 (async () => {
   const server = createServer({ shell: 'browser' });
   let port;

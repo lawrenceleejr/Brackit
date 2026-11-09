@@ -23,8 +23,8 @@ under each, and lets you pick the keeper with `1` `2` `3`.
 **Mac app** — download the latest `.dmg` from
 [Releases](https://github.com/lawrenceleejr/brackit/releases) (tagged builds),
 or from the artifacts of any run under
-[Actions](https://github.com/lawrenceleejr/brackit/actions). Pick `arm64` for
-Apple silicon, `x64` for Intel.
+[Actions](https://github.com/lawrenceleejr/brackit/actions):
+`Brackit-macOS-AppleSilicon` (M-series) or `Brackit-macOS-Intel`.
 
 The app is not notarized, so the first launch needs one of:
 
@@ -56,6 +56,7 @@ your PATH.)
 | `1` `2` `3` | pick that look for export (replaces the set's pick) |
 | `⌘` + `1` `2` `3` | add / remove a look, to export several from one set (`⇧` also works in the browser, where ⌘-digits switch tabs) |
 | `0` | unstage the whole set |
+| `⌘` `⌫` | delete every version of this photo from the card — undo with `⌘Z` within 10 s, after which the files are permanently removed |
 | `space` | inspect the pick full screen at full resolution; there `1` `2` `3` switch (and pick) looks, `space`/`Esc` returns |
 | click | view one look large |
 | `↑` `↓` | cycle looks in the large view |
@@ -85,6 +86,6 @@ npm run app
 `npm start` runs the browser version, `npm test` runs the tests, and
 `npm run dist` builds an app for the current platform into `dist/`.
 
-CI (`.github/workflows/build.yml`) builds macOS (arm64 + x64 `.dmg`/`.zip`),
+CI (`.github/workflows/build.yml`) builds macOS (Apple silicon and Intel `.dmg`),
 Linux (`AppImage`) and Windows installers on every push. Push a tag like
 `v0.1.0` to publish them as a GitHub release.

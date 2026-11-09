@@ -975,12 +975,74 @@ async function exportEdited(p, edit) {
 /* ------------------------------------------------------------ chrome */
 
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, opts = {}) {
   const t = $('#toast');
   t.textContent = msg;
+  if (opts.action) {
+    const b = el('button', 'toast-action', opts.label || 'Undo');
+    b.onclick = () => {
+      t.hidden = true;
+      opts.action();
+    };
+    t.append(b);
+  }
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 1800);
+  toastTimer = setTimeout(() => (t.hidden = true), opts.ms || 1800);
+}
+
+/* ------------------------------------------------------------ delete from card */
+
+let lastDelete = null; // {token, set, li, flagged, until}
+
+async function deleteSet() {
+  const set = S.view[S.idx];
+  if (!set) return;
+  const names = set.photos.map((id) => photo(id).name);
+  let res;
+  try {
+    res = await api('POST', '/api/delete', { ids: set.photos });
+  } catch (e) {
+    return toast(e.message, { ms: 3500 });
+  }
+  const flagged = set.photos.map((id) => photo(id).key).filter((k) => S.flags.has(k));
+  for (const k of flagged) S.flags.delete(k);
+  if (flagged.length) saveFlags();
+  const li = S.lib.sets.indexOf(set);
+  S.lib.sets.splice(li, 1);
+  const idx = S.idx;
+  applyFilter(false);
+  S.idx = clamp(idx, 0, Math.max(0, S.view.length - 1));
+  if (S.solo) {
+    const next = S.view[S.idx];
+    if (!next || next.kind === 'video') closeSolo();
+    else S.solo.pos = selectedPos(next) ?? Math.min(S.solo.pos, next.photos.length - 1);
+  }
+  lastDelete = { token: res.token, set, li, flagged, until: Date.now() + res.undoMs };
+  render();
+  updateFlagsUi();
+  const label = names.length > 1 ? `${names[0]} – ${names[names.length - 1]}` : names[0];
+  toast(`Deleted ${label} from the card`, { action: undoDelete, label: 'Undo ⌘Z', ms: res.undoMs - 300 });
+}
+
+async function undoDelete() {
+  const d = lastDelete;
+  if (!d || Date.now() > d.until) return toast('Nothing to undo');
+  lastDelete = null;
+  try {
+    await api('POST', '/api/undo-delete', { token: d.token });
+  } catch (e) {
+    return toast(e.message, { ms: 3500 });
+  }
+  S.lib.sets.splice(Math.min(d.li, S.lib.sets.length), 0, d.set);
+  for (const k of d.flagged) S.flags.add(k);
+  if (d.flagged.length) saveFlags();
+  applyFilter(false);
+  const i = S.view.indexOf(d.set);
+  if (i >= 0) S.idx = i;
+  render();
+  updateFlagsUi();
+  toast('Restored');
 }
 
 function toggleFullscreen() {
@@ -1086,8 +1148,11 @@ function onKey(e) {
   // tabs, so Shift works there too). Other modified keys belong to the system.
   const digit = /^Digit([0-9])$/.exec(e.code);
   const addMod = e.metaKey || e.ctrlKey || e.shiftKey;
-  if ((e.metaKey || e.ctrlKey || e.altKey) && !digit) return;
-  const k = digit ? digit[1] : e.key;
+  const cmd = e.metaKey || e.ctrlKey;
+  const delKey = cmd && (e.key === 'Backspace' || e.key === 'Delete');
+  const undoKey = cmd && !e.shiftKey && (e.key === 'z' || e.key === 'Z');
+  if ((e.metaKey || e.ctrlKey || e.altKey) && !digit && !delKey && !undoKey) return;
+  const k = digit ? digit[1] : delKey ? 'DeleteSet' : undoKey ? 'Undo' : e.key;
 
   if (!$('#help').hidden) {
     $('#help').hidden = true;
@@ -1119,6 +1184,14 @@ function onKey(e) {
   if ($('#viewer').hidden) {
     if (k === 'f' || k === 'F') toggleFullscreen();
     return;
+  }
+  if (k === 'DeleteSet') {
+    e.preventDefault();
+    return deleteSet();
+  }
+  if (k === 'Undo') {
+    e.preventDefault();
+    return undoDelete();
   }
 
   const set = S.view[S.idx];

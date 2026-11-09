@@ -256,3 +256,7 @@ body.fs .look .caption { opacity: .75; }
 #solo-caption .keys .key.on { background: var(--accent); border-color: var(--accent); color: #111; }
 #solo-caption .keys .key.on.here { box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px var(--ink); }
 #solo-caption.flagged .sim { color: var(--accent); }
+
+#toast { display: flex; gap: 14px; align-items: baseline; }
+#toast .toast-action { color: var(--accent); }
+#toast .toast-action:hover { text-decoration: underline; }

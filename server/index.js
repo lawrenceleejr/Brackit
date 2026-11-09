@@ -206,8 +206,88 @@ async function uniqueDest(dir, name, size) {
   throw new Error('too many name collisions');
 }
 
+/* Deleting from the card is permanent, so it happens in two steps: files are
+   first moved (an instant rename on the same volume) into a hidden holding
+   folder on the card, then removed for good after UNDO_MS unless undone. If
+   the app quits in between, the holding folder is purged on exit (or on the
+   next open of that card). */
+const UNDO_MS = 10000;
+const TRASH = '.brackit-trash';
+
+function rmrfSync(p) {
+  try {
+    fs.rmSync(p, { recursive: true, force: true });
+  } catch {}
+}
+
+function cleanupTrashRoot(root) {
+  const dir = path.join(root, TRASH);
+  try {
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+  } catch {}
+}
+
+function createDeleter() {
+  const pending = new Map(); // token -> {root, dir, moves, timer}
+  let seq = 0;
+
+  function purge(token) {
+    const job = pending.get(token);
+    if (!job) return;
+    clearTimeout(job.timer);
+    pending.delete(token);
+    rmrfSync(job.dir);
+    cleanupTrashRoot(job.root);
+  }
+
+  async function remove(root, photos) {
+    const token = `${Date.now().toString(36)}-${++seq}`;
+    const dir = path.join(root, TRASH, token);
+    const moves = [];
+    try {
+      for (const p of photos) {
+        const files = [p.file];
+        const dot = path.join(path.dirname(p.file), '._' + path.basename(p.file)); // macOS AppleDouble sidecar
+        if (fs.existsSync(dot)) files.push(dot);
+        for (const from of files) {
+          const to = path.join(dir, path.relative(root, from));
+          await fs.promises.mkdir(path.dirname(to), { recursive: true });
+          await fs.promises.rename(from, to);
+          moves.push({ from, to });
+        }
+      }
+    } catch (e) {
+      for (const m of moves.reverse()) await fs.promises.rename(m.to, m.from).catch(() => {});
+      rmrfSync(dir);
+      cleanupTrashRoot(root);
+      throw new Error(e.code === 'EROFS' || e.code === 'EACCES' || e.code === 'EPERM' ? 'The card is locked or read-only' : e.message);
+    }
+    const timer = setTimeout(() => purge(token), UNDO_MS);
+    pending.set(token, { root, dir, moves, timer });
+    return token;
+  }
+
+  async function undo(token) {
+    const job = pending.get(token);
+    if (!job) return false;
+    clearTimeout(job.timer);
+    pending.delete(token);
+    for (const m of job.moves) await fs.promises.rename(m.to, m.from);
+    rmrfSync(job.dir);
+    cleanupTrashRoot(job.root);
+    return true;
+  }
+
+  function purgeAll() {
+    for (const token of [...pending.keys()]) purge(token);
+  }
+
+  return { remove, undo, purgeAll };
+}
+
 function createServer(opts = {}) {
   const library = new Library();
+  const deleter = createDeleter();
   const state = Object.assign({ flags: [], exported: [], edits: {}, lastDest: null, lastRoot: null }, loadState());
   const pickFolder =
     opts.pickFolder || (process.platform === 'darwin' ? (purpose) => macChooseFolder(purpose) : null);
@@ -237,6 +317,8 @@ function createServer(opts = {}) {
         const body = await readBody(req);
         const p = body.path && path.resolve(body.path.replace(/^~(?=$|\/)/, os.homedir()));
         if (!p || !fs.existsSync(p) || !fs.statSync(p).isDirectory()) return json(res, 400, { error: 'Folder not found' });
+        // leftovers from a session that quit mid-undo window: finish the delete
+        rmrfSync(path.join(p, TRASH));
         const summary = await library.scan(p);
         state.lastRoot = p;
         saveState(state);
@@ -288,6 +370,18 @@ function createServer(opts = {}) {
         state.exported = [...new Set([...state.exported, photo.key])];
         saveState(state);
         return json(res, 200, { ok: true, skipped: target.exists, path: target.path });
+      }
+      case 'POST /api/delete': {
+        const body = await readBody(req);
+        const photos = (Array.isArray(body.ids) ? body.ids : []).map((id) => library.photos.get(String(id))).filter(Boolean);
+        if (!photos.length || !library.root) return json(res, 400, { error: 'Nothing to delete' });
+        const token = await deleter.remove(library.root, photos);
+        return json(res, 200, { token, undoMs: UNDO_MS });
+      }
+      case 'POST /api/undo-delete': {
+        const body = await readBody(req);
+        const ok = await deleter.undo(String(body.token || ''));
+        return json(res, ok ? 200 : 410, ok ? { ok } : { error: 'Too late to undo — the files are gone' });
       }
       case 'POST /api/reveal': {
         const body = await readBody(req);
@@ -369,6 +463,8 @@ function createServer(opts = {}) {
   });
 
   server.library = library;
+  server.purgeDeletes = deleter.purgeAll;
+  process.on('exit', deleter.purgeAll);
   return server;
 }
 

@@ -41,6 +41,7 @@ async function createWindow(port) {
 
 app.whenReady().then(async () => {
   const server = createServer({ shell: 'electron', pickFolder });
+  serverRef = server;
   const port = await listen(server, 0);
 
   const isMac = process.platform === 'darwin';
@@ -62,4 +63,6 @@ app.whenReady().then(async () => {
   });
 });
 
+let serverRef = null;
+app.on('will-quit', () => serverRef && serverRef.purgeDeletes());
 app.on('window-all-closed', () => app.quit());

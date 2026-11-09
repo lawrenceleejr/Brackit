@@ -45,15 +45,15 @@
     "mac": {
       "category": "public.app-category.photography",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
       "identity": "-",
       "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
     "dmg": {
-      "title": "Brackit"
+      "title": "Brackit",
+      "format": "ULFO"
     },
     "linux": {
       "target": [
@@ -66,6 +66,10 @@
         "nsis"
       ]
     },
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "electronLanguages": [
+      "en"
+    ],
+    "compression": "maximum"
   }
 }
