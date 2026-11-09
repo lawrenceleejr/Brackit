@@ -1262,10 +1262,21 @@ function closeStaged() {
   $('#staged-grid').innerHTML = '';
 }
 
-function renderStaged() {
+let destToken = 0;
+async function renderStaged() {
+  const token = ++destToken;
+  // what's already in the export folder (also tells us which picks are there)
+  const dest = await api('GET', `/api/dest?path=${encodeURIComponent(S.dest)}`).catch(() => ({ files: [] }));
+  if (token !== destToken) return;
+  const there = new Set(dest.files.map((f) => `${f.name}:${f.size}`));
+  const names = new Set(dest.files.map((f) => f.name));
+  // already written: an identical file is in the folder (cropped exports
+  // differ in size, so for those: exported before and the name is there)
+  const written = (p) => (editOf(p) ? S.exported.has(p.key) && names.has(p.name) : there.has(`${p.name}:${p.size}`));
   const items = stagedPhotos();
   const grid = $('#staged-grid');
   grid.innerHTML = '';
+  renderDest(dest);
   const vids = items.filter((p) => p.kind === 'video').length;
   const bytes = items.reduce((a, p) => a + p.size, 0);
   const parts = [];
@@ -1276,19 +1287,15 @@ function renderStaged() {
   $('#staged-summary').textContent = items.length ? `${parts.join(' · ')} · ${fmtBytes(bytes)}` : 'Nothing staged yet';
   $('#dest').textContent = S.dest.replace(S.server.home, '~');
   $('#dest').title = S.dest;
-  $('#export').disabled = !items.length;
+  const pending = items.filter((p) => !written(p)).length;
+  $('#export').disabled = !pending;
+  $('#export').textContent = pending && pending < items.length ? `Export ${fmtN(pending)} new` : 'Export';
   $('#clear-flags').hidden = !items.length;
   if (!items.length) {
     grid.append(el('div', 'staged-empty', 'Press 1, 2 or 3 on a set to stage a look.'));
     return;
   }
-  const io = new IntersectionObserver((entries) => {
-    for (const en of entries) {
-      if (!en.isIntersecting) continue;
-      io.unobserve(en.target);
-      en.target._load();
-    }
-  }, { root: grid, rootMargin: '400px' });
+  const io = stagedObserver();
 
   for (const p of items) {
     const tile = el('div', 'tile');
@@ -1297,6 +1304,8 @@ function renderStaged() {
     const meta = el('div', 'meta');
     meta.append(el('span', 'sim', p.kind === 'video' ? 'Video' : p.filmSim || 'Photo'), el('span', 'muted', p.name));
     tile.append(meta);
+    if (written(p)) meta.append(el('span', 'there', 'in folder'));
+    else tile.classList.add('pending'); // will be written on export: outlined
     if (p.kind === 'video') tile.append(el('span', 'badge', 'video'));
     else if (editOf(p)) tile.append(el('span', 'badge', 'cropped'));
     const rm = el('button', 'remove', '×');
@@ -1417,6 +1426,7 @@ async function doExport() {
     reveal.onclick = () => api('POST', '/api/reveal', { path: S.dest });
     result.append(reveal);
     render();
+    renderStaged(); // written photos lose their outline; the folder list updates
   } catch (e) {
     result.textContent = 'Export failed: ' + e.message;
   } finally {
@@ -1427,6 +1437,57 @@ async function doExport() {
 
 // Renders the crop from the full-resolution file and hands the JPEG to the
 // server, which restores the camera's EXIF before writing it.
+function stagedObserver() {
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        io.unobserve(en.target);
+        en.target._load();
+      }
+    },
+    { root: $('#staged-scroll'), rootMargin: '400px' }
+  );
+  return io;
+}
+
+// Files already in the export folder, newest first, as small thumbnails.
+function renderDest(dest) {
+  const head = $('#dest-head');
+  const grid = $('#dest-grid');
+  head.innerHTML = '';
+  grid.innerHTML = '';
+  if (!dest.files || !dest.files.length) {
+    head.hidden = grid.hidden = true;
+    return;
+  }
+  head.hidden = grid.hidden = false;
+  const bytes = dest.files.reduce((a, f) => a + f.size, 0);
+  head.append(
+    el('span', '', `Already in ${S.dest.replace(S.server.home, '~')}`),
+    el('span', 'muted', `${fmtN(dest.files.length)} file${dest.files.length === 1 ? '' : 's'} · ${fmtBytes(bytes)}`)
+  );
+  const io = stagedObserver();
+  for (const f of dest.files) {
+    const tile = el('div', 'dtile');
+    const thumb = el('div', 'thumb');
+    tile.title = f.name;
+    tile.append(thumb, el('div', 'name', f.name));
+    if (f.kind === 'video') thumb.append(el('span', 'play', '▶'));
+    else {
+      thumb._load = () => {
+        const img = new Image();
+        img.decoding = 'async';
+        img.alt = '';
+        img.src = `/api/dest-img?path=${encodeURIComponent(S.dest)}&name=${encodeURIComponent(f.name)}`;
+        thumb.append(img);
+      };
+      io.observe(thumb);
+    }
+    grid.append(tile);
+  }
+}
+
 async function exportEdited(p, edit) {
   const img = new Image();
   img.decoding = 'async';

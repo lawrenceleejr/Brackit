@@ -294,6 +294,52 @@ fn api(app: &Arc<App>, mut req: Request, path: &str, params: &HashMap<String, St
             let body = summary(&app.lib.read().unwrap());
             send_json(req, 200, body)
         }
+        ("/api/dest", true, _, _) => {
+            // what's already in the export folder (top level only)
+            let dir = expand(params.get("path").map(String::as_str).unwrap_or(""));
+            let mut files: Vec<(String, u64, f64)> = Vec::new();
+            if let Ok(rd) = fs::read_dir(&dir) {
+                for e in rd.flatten() {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.starts_with('.') || !(library::is_jpeg(&name) || library::is_video(&name)) {
+                        continue;
+                    }
+                    let Ok(md) = e.metadata() else { continue };
+                    if !md.is_file() {
+                        continue;
+                    }
+                    let ms = md.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as f64).unwrap_or(0.0);
+                    files.push((name, md.len(), ms));
+                }
+            }
+            files.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+            let files: Vec<Value> = files
+                .into_iter()
+                .map(|(name, size, mtime)| json!({ "name": name, "size": size, "mtime": mtime, "kind": if library::is_video(&name) { "video" } else { "photo" } }))
+                .collect();
+            send_json(req, 200, json!({ "dir": dir.to_string_lossy(), "exists": dir.is_dir(), "files": files }))
+        }
+        ("/api/dest-img", true, _, _) => {
+            // small preview of a file in the export folder
+            let dir = expand(params.get("path").map(String::as_str).unwrap_or(""));
+            let name = params.get("name").cloned().unwrap_or_default();
+            if name.is_empty() || name.contains('/') || name.contains('\\') || name.starts_with('.') || !library::is_jpeg(&name) {
+                return err(req, 400, "bad name");
+            }
+            let file = dir.join(&name);
+            let Ok(md) = fs::metadata(&file) else { return err(req, 404, "not found") };
+            let meta = crate::jpeg::read_meta(&file).unwrap_or_default();
+            let p = Photo {
+                size: md.len(),
+                orientation: meta.orientation.max(1),
+                preview: meta.preview.filter(|(s, _)| crate::jpeg::valid_preview(&file, *s)),
+                thumb: meta.thumb,
+                file,
+                name,
+                ..Default::default()
+            };
+            serve_image(req, &p, Size::Thumb)
+        }
         ("/api/survey", _, true, _) => {
             let body = read_json(&mut req);
             let Some(p) = body.get("path").and_then(Value::as_str).map(expand) else { return err(req, 400, "Folder not found") };

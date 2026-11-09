@@ -127,6 +127,22 @@ test('exports originals byte-for-byte and skips ones already there', async () =>
   assert.ok(st.exported.includes(byName('DSCF0002.JPG').key));
 });
 
+test('lists what is already in the export folder, with thumbnails', async () => {
+  const dest = path.join(tmp, 'out');
+  fs.writeFileSync(path.join(dest, 'notes.txt'), 'x');
+  const r = (await api('GET', `/api/dest?path=${encodeURIComponent(dest)}`)).data;
+  assert.equal(r.exists, true);
+  assert.deepEqual(r.files.map((f) => f.name).sort(), ['DSCF0002.JPG', 'DSCF0005.MOV']);
+  assert.equal(r.files.find((f) => f.name === 'DSCF0005.MOV').kind, 'video');
+  const t = await api('GET', `/api/dest-img?path=${encodeURIComponent(dest)}&name=DSCF0002.JPG`);
+  assert.equal(t.status, 200);
+  assert.deepEqual([...t.data.subarray(0, 2)], [0xff, 0xd8]);
+  assert.ok(t.data.length < 100, 'serves the tiny embedded thumbnail, not the file');
+  assert.equal((await api('GET', `/api/dest-img?path=${encodeURIComponent(dest)}&name=..%2Fcard%2Fx.JPG`)).status, 400);
+  const missing = (await api('GET', `/api/dest?path=${encodeURIComponent(path.join(tmp, 'nope'))}`)).data;
+  assert.deepEqual(missing, { dir: path.join(tmp, 'nope'), exists: false, files: [] });
+});
+
 test('edited export keeps EXIF + film sim, resets orientation and size', async () => {
   const dest = path.join(tmp, 'out2');
   const encoded = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
