@@ -567,9 +567,9 @@ body.touch .no-touch { display: none !important; }
 
 /* ---------- levels (V): histogram, three points, values ---------- */
 #levels {
-  position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 6;
+  position: absolute; right: 16px; bottom: 52px; z-index: 6;
   width: 332px; padding: 12px 16px 14px; border-radius: 4px;
-  background: rgba(13, 13, 12, .9); border: 1px solid var(--hair);
+  background: rgba(13, 13, 12, .96); border: 1px solid var(--hair);
   -webkit-user-select: none; user-select: none;
 }
 .levels-title { color: var(--muted); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
@@ -594,4 +594,4 @@ body.touch .no-touch { display: none !important; }
 .lv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .lv-actions .btn { padding: 5px 10px; }
 #solo.levels-on #solo-caption .tool { opacity: .35; pointer-events: none; }
-@media (max-width: 700px) { #levels { width: calc(100vw - 20px); bottom: 44px; } }
+@media (max-width: 700px) { #levels { width: calc(100vw - 20px); right: 10px; bottom: 44px; } }
