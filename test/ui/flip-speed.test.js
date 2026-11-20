@@ -243,6 +243,33 @@ test('cropped sets: arrow presses paint within 50 ms', async () => {
   await page.close();
 });
 
+// Levels are a GPU colour filter on screen: flipping onto levelled looks (and
+// ones both cropped and levelled) costs no more than onto plain ones.
+test('levels: arrow presses paint within 50 ms, 3-up and large view', async () => {
+  const { page, errors } = await openCard({});
+  await page.evaluate(() => {
+    let i = 0;
+    for (const p of Object.values(S.lib.photos)) {
+      const lv = { b: 10 + (i % 7) * 3, g: 0.8 + (i % 5) * 0.1, w: 240 - (i % 4) * 5 };
+      S.edits[p.key] = i++ % 3 ? { ...IDENTITY, crop: { ...IDENTITY.crop }, levels: lv } : { angle: 1, crop: { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }, aspect: 'free', levels: lv };
+    }
+    render();
+  });
+  await page.waitForTimeout(3000);
+  await page.evaluate(() => (window.__keyDurations = []));
+  const r = await flip(page, { presses: 25, gapMs: 120 });
+  assertFast('levels', r);
+  assert.ok(r.screens.every((s) => s.filled), 'some frame was empty after a press');
+  assert.ok(await page.evaluate(() => [...document.querySelectorAll('#stage .frame > *')].every((n) => /url\(#lv-/.test(n.style.filter))), 'levels shown');
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(800);
+  await page.evaluate(() => (window.__keyDurations = []));
+  const rl = await flip(page, { presses: 20, gapMs: 120, large: true });
+  assertFast('levels, large view', rl);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 // Forward is → ↓ j, back is ← ↑ k, in the 3-up and in the large view alike.
 test('every flip key moves a set, within 50 ms', async () => {
   const { page, errors } = await openCard({ settle: 1500 });

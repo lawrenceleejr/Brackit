@@ -2668,14 +2668,17 @@ function closeLevels(commit) {
   if (commit) {
     setEdit(key, { levels: lvIdentity(lv) ? undefined : lv });
     saveEdits();
-    render(); // the 3-up and the large view, with the new look
+  }
+  // the picture on screen: the kept levels (or none) right away
+  const node = S.solo && $('#solo-frame').firstElementChild;
+  if (node && S.lib.photos[id]) {
+    showLevels(node, S.lib.photos[id]);
+    if (TOOLS.clip) applyOverlays($('#solo'), node, id, 'card', { zoomed: S.solo.zoom });
+  }
+  if (commit) {
+    renderSoloCaption(); // "levels" next to the file name
+    S.stageStale = true; // the 3-up shows them when the large view closes
     if (!$('#staged').hidden) renderStaged();
-  } else if (S.solo) {
-    const node = $('#solo-frame').firstElementChild;
-    if (node && S.lib.photos[id]) {
-      showLevels(node, S.lib.photos[id]);
-      if (TOOLS.clip) applyOverlays($('#solo'), node, id, 'card', { zoomed: S.solo.zoom });
-    }
   }
 }
 
