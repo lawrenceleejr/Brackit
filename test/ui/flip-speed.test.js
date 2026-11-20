@@ -258,12 +258,13 @@ test('levels: arrow presses paint within 50 ms, 3-up and large view', async () =
   await page.waitForTimeout(3000);
   await page.evaluate(() => (window.__keyDurations = []));
   const r = await flip(page, { presses: 25, gapMs: 120 });
-  assertFast('levels', r);
+  if (!process.env.BRACKIT_DEBUG) assertFast('levels', r);
   assert.ok(r.screens.every((s) => s.filled), 'some frame was empty after a press');
-  assert.ok(await page.evaluate(() => [...document.querySelectorAll('#stage .frame > *')].every((n) => /url\(#lv-/.test(n.style.filter))), 'levels shown');
+  assert.ok(await page.evaluate(() => [...document.querySelectorAll('#stage .frame > *')].every((n) => n.dataset.baked || /url\("?#lv-/.test(n.style.filter))), 'levels shown (baked into the copy, or as a filter)');
   await page.keyboard.press(' ');
   await page.waitForTimeout(800);
   await page.evaluate(() => (window.__keyDurations = []));
+  if (process.env.BRACKIT_DEBUG) console.log('  breakdown [duration, js ms, filters]', JSON.stringify(await page.evaluate(() => performance.getEntriesByType('event').filter((e) => e.name === 'keydown').slice(-25).map((e) => [e.duration, Math.round(e.processingEnd - e.processingStart)]))), await page.evaluate(() => document.querySelectorAll('filter').length));
   const rl = await flip(page, { presses: 20, gapMs: 120, large: true });
   assertFast('levels, large view', rl);
   assert.deepEqual(errors, []);

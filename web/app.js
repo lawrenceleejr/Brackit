@@ -841,7 +841,8 @@ function layoutFor(set) {
 function dispKey(set, id) {
   const { imgMax, lookW } = layoutFor(set);
   const ed = id ? cropOf(photo(id)) : null;
-  return `${Math.round(lookW)}x${imgMax}@${dpr()}${ed ? JSON.stringify(ed) : ''}`;
+  const lv = id ? levelsOf(photo(id)) : null;
+  return `${Math.round(lookW)}x${imgMax}@${dpr()}${ed ? JSON.stringify(ed) : ''}${lv ? JSON.stringify(lv) : ''}`;
 }
 
 function displayCopy(url, set, id) {
@@ -880,10 +881,14 @@ function makeDisplayCopy() {
     const ch = Math.max(1, Math.round((w / a) * dpr()));
     const key = dispKey(set, id);
     const edit = cropOf(photo(id));
-    if (edit) {
-      // cropped: render the crop once, at display size, in this idle moment
-      const c = renderEdited(e.img, edit, cw);
+    const lv = levelsOf(photo(id));
+    if (lv) levelsFilter(lv); // (the on-screen filter, ready before it's needed)
+    if (edit || lv) {
+      // cropped and/or levelled: drawn once, at display size, in this idle
+      // moment, so the set shows without any filter at all
+      const c = bakeLevels(renderEdited(e.img, edit || IDENTITY, cw), lv);
       c.className = 'ready';
+      if (lv) c.dataset.baked = '1';
       DISP.set(url, { canvas: c, key });
       while (DISP.size > DISP_MAX) DISP.delete(DISP.keys().next().value);
       if (dispQueue.length) scheduleDisplayCopy();
@@ -1045,7 +1050,8 @@ function levelsCss(p) {
   return lv ? levelsFilter(lv) : '';
 }
 function showLevels(node, p) {
-  if (node && node.style) node.style.filter = levelsCss(p);
+  // a display copy made in idle time has its levels in its pixels already
+  if (node && node.style) node.style.filter = node.dataset && node.dataset.baked ? '' : levelsCss(p);
   return node;
 }
 
@@ -1068,6 +1074,56 @@ function bakeLevels(canvas, lv) {
     ctx.putImageData(im, 0, y);
   }
   return canvas;
+}
+
+/* On screen, levels are always pixels made ahead (never a filter while
+   flipping: in software rendering a filter on a large picture costs far more
+   than the 50 ms budget):
+   - the header thumbnail stand-in: levelled on the spot (it's tiny);
+   - the 3-up: display-size copies, made in idle time or, if missing, on the
+     spot (about the cost of drawing it);
+   - the large view: a sharp copy made in small slices, so a key press never
+     waits behind it. The live filter is used only while dragging in Levels. */
+function levelledThumb(timg, p) {
+  const c = bakeLevels(makePlaceholder(timg, p, cropOf(p)), levelsOf(p));
+  c.dataset.baked = '1';
+  return c;
+}
+
+function levelledCopy(img, set, id) {
+  const url = previewUrl(id);
+  const { imgMax, lookW, a } = layoutFor(set);
+  const cw = Math.max(1, Math.round(Math.min(lookW, imgMax * a) * dpr()));
+  const c = bakeLevels(renderEdited(img, cropOf(photo(id)) || IDENTITY, cw), levelsOf(photo(id)));
+  c.className = 'ready';
+  c.dataset.baked = '1';
+  DISP.set(url, { canvas: c, key: dispKey(set, id) });
+  while (DISP.size > DISP_MAX) DISP.delete(DISP.keys().next().value);
+  return c;
+}
+
+// The same, a slice at a time, for big pictures; null if no longer wanted.
+async function levelledLater(src, crop, lv, maxWidth, alive) {
+  const c = renderEdited(src, crop || IDENTITY, maxWidth);
+  const t = levelsLut(lv);
+  const ctx = c.getContext('2d');
+  const W = c.width;
+  const rows = Math.max(1, Math.floor(250_000 / W));
+  for (let y = 0; y < c.height; y += rows) {
+    await new Promise((r) => setTimeout(r, 0)); // let keys in between slices
+    if (!alive()) return null;
+    const h = Math.min(rows, c.height - y);
+    const im = ctx.getImageData(0, y, W, h);
+    const d = im.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = t[d[i]];
+      d[i + 1] = t[d[i + 1]];
+      d[i + 2] = t[d[i + 2]];
+    }
+    ctx.putImageData(im, 0, y);
+  }
+  c.dataset.baked = '1';
+  return c;
 }
 
 function coverScale(W, H, deg) {
@@ -1394,19 +1450,21 @@ function render() {
     frame.dataset.photo = id; // for the loupe
     frame.dataset.src = 'card';
     const edit = cropOf(p);
+    const lv = levelsOf(p);
     const entry = getImage(previewUrl(id), 0.1);
     let sharp = false;
     const showPreview = (img) => {
       if (token !== renderToken || !img.naturalWidth) return;
       sharp = true;
-      const node = displayCopy(previewUrl(id), set, id) || (edit ? cropView(img, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax) : img);
+      const node =
+        displayCopy(previewUrl(id), set, id) || (lv ? levelledCopy(img, set, id) : edit ? cropView(img, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax) : img);
       node.classList.add('ready');
       frame.replaceChildren(showLevels(node, p));
       if (S.showHist) {
         // a word-sized histogram in the caption, after the simulation name
         const cap = look.querySelector('.caption');
         const sim = cap && cap.querySelector('.sim');
-        if (sim) sim.after(histCanvas(node, 56, 14, 'hist-mini', levelsOf(p)));
+        if (sim) sim.after(histCanvas(node, 56, 14, 'hist-mini', node.dataset && node.dataset.baked ? null : levelsOf(p)));
       }
     };
     if (entry.done) showPreview(entry.img); // cached: sharp immediately
@@ -1415,7 +1473,10 @@ function render() {
       // already decoded, so it's on screen in this same frame)
       const showThumb = (timg) => {
         if (token !== renderToken || sharp || !timg || !timg.naturalWidth) return;
-        if (edit) {
+        if (lv) {
+          const { a, imgMax } = layoutFor(set);
+          frame.replaceChildren(sizeToFrame(levelledThumb(timg, p), frame, a, imgMax));
+        } else if (edit) {
           const v = cropView(timg, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax);
           v.classList.add('lowres');
           frame.replaceChildren(showLevels(v, p));
@@ -1881,7 +1942,7 @@ function renderSolo() {
     const old = $('#solo-hist');
     if (old) old.remove();
     if (S.showHist && level !== 'thumb' && !LV) {
-      const h = histCanvas(node, 220, 64, '', levelsOf(p));
+      const h = histCanvas(node, 220, 64, '', node.dataset && node.dataset.baked ? null : levelsOf(p));
       h.id = 'solo-hist';
       solo.append(h);
     }
@@ -1891,12 +1952,38 @@ function renderSolo() {
     else requestAnimationFrame(() => token === soloToken && S.solo && applyOverlays(solo, node, id, 'card', { zoomed: S.solo.zoom }));
   };
   const edit = cropOf(p);
+  // levelled (and not being adjusted right now): pixels made ahead, no filter
+  const lv = LV && LV.key === p.key ? null : levelsOf(p);
+  const alive = () => token === soloToken;
+  const fitWidth = () => {
+    const a = photoAspect(p) * (edit ? edit.crop.w / edit.crop.h : 1);
+    return Math.max(1, Math.round(Math.min(frame.clientWidth, frame.clientHeight * a) * dpr()));
+  };
+  const sizeSolo = (node) => {
+    const a = photoAspect(p) * (edit ? edit.crop.w / edit.crop.h : 1);
+    const w = Math.min(frame.clientWidth, frame.clientHeight * a);
+    node.style.width = `${Math.round(w)}px`;
+    node.style.height = `${Math.round(w / a)}px`;
+    return node;
+  };
   const sharper = (level) => frame.dataset.id === id && (frame.dataset.level === 'full' || (level === 'thumb' && frame.dataset.level === 'preview'));
 
   // 1. something on screen in this frame: the preview if ready, else the thumbnail
   const pre = getImage(previewUrl(id), 0);
   const showPreview = (img) => {
     if (token !== soloToken || !img || !img.naturalWidth || sharper('preview')) return;
+    if (lv) {
+      // the 3-up's levelled copy, stretched, at once; then a sharp one
+      const copy = displayCopy(previewUrl(id), set, id);
+      if (copy && !sharper('thumb')) {
+        const c = cloneCanvas(copy);
+        c.dataset.baked = '1';
+        c.classList.add('lowres');
+        show(sizeSolo(c), 'thumb');
+      }
+      levelledLater(img, edit, lv, fitWidth(), alive).then((c) => c && alive() && !sharper('preview') && show(c, 'preview'));
+      return;
+    }
     // the decoded preview element itself (a copy could be decoded again)
     show(edit ? cropView(img, p, edit, frame.clientWidth, frame.clientHeight) : img, 'preview');
   };
@@ -1905,7 +1992,8 @@ function renderSolo() {
     const showThumb = (timg) => {
       if (token !== soloToken || !timg || !timg.naturalWidth || sharper('thumb')) return;
       let node;
-      if (edit) node = cropView(timg, p, edit, frame.clientWidth, frame.clientHeight);
+      if (lv) node = sizeSolo(levelledThumb(timg, p));
+      else if (edit) node = cropView(timg, p, edit, frame.clientWidth, frame.clientHeight);
       else {
         const a = photoAspect(p);
         const w = Math.min(frame.clientWidth, frame.clientHeight * a);
@@ -1929,6 +2017,11 @@ function renderSolo() {
       if (token !== soloToken) return;
       getImage(fullUrl(id), -1).promise.then((full) => {
         if (token !== soloToken || !full.naturalWidth) return;
+        if (lv) {
+          // at screen size (or every pixel when zoomed in), a slice at a time
+          levelledLater(full, edit, lv, S.solo.zoom ? 0 : fitWidth(), alive).then((c) => c && alive() && show(c, 'full'));
+          return;
+        }
         show(edit ? renderEdited(full, edit) : full, 'full');
       });
       // and the same look in the next set, so stepping on is sharp too
@@ -2649,7 +2742,7 @@ function openLevels(pos) {
   $('#levels-title').textContent = `Levels · ${p.filmSim || p.name}`;
   $('#solo').classList.add('levels-on');
   updateLevels();
-  showLevels($('#solo-frame').firstElementChild, p);
+  renderSolo(); // the picture without its kept levels, under the live filter
   levelsSample(p).then((sample) => {
     if (!LV || LV.id !== p.id || !sample) return;
     LV.sample = sample;

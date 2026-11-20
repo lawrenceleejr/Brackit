@@ -115,6 +115,9 @@ function drawLoupe(ev) {
   const sy = (src === t.node ? fy : uy) * H - sh / 2;
   ctx.imageSmoothingEnabled = TOOLS.zoom < 2;
   ctx.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  // the original has no levels in it: show them (the screen copy may have them baked)
+  const baked = src === t.node && t.node.dataset && t.node.dataset.baked;
+  c.style.filter = t.src === 'card' && p && !baked ? levelsCss(p) : '';
   lp.querySelector('.loupe-zoom').textContent = `${Math.round(TOOLS.zoom * 100)}%${full.done ? '' : ' …'}`;
 }
 
@@ -190,7 +193,8 @@ async function applyOverlays(host, node, id, src, opts = {}) {
   if (TOOLS.clip) {
     // as levels leave it (the live levels while they're being dragged)
     const p = src === 'card' && S.lib ? S.lib.photos[id] : null;
-    const lv = p ? (LV && LV.key === p.key ? LV : levelsOf(p)) : null;
+    // (a levelled copy made ahead has them in its pixels already)
+    const lv = p ? (LV && LV.key === p.key ? LV : node.dataset && node.dataset.baked ? null : levelsOf(p)) : null;
     layer.append(clippingCanvas(node, nr.width, nr.height, lv && !lvIdentity(lv) ? levelsLut(lv) : null));
   }
   if (TOOLS.notes) {
