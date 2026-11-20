@@ -826,7 +826,7 @@ function layoutFor(set) {
   const gap = 10;
   const n = set.photos.length;
   const p0 = photo(set.photos[0]);
-  const ed = editOf(p0);
+  const ed = cropOf(p0);
   const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
   let imgMax = Math.max(50, Math.floor(SH - CAPTION_H - 2));
   let lookW = (SW - gap * (n - 1)) / n;
@@ -840,7 +840,7 @@ function layoutFor(set) {
 
 function dispKey(set, id) {
   const { imgMax, lookW } = layoutFor(set);
-  const ed = id ? editOf(photo(id)) : null;
+  const ed = id ? cropOf(photo(id)) : null;
   return `${Math.round(lookW)}x${imgMax}@${dpr()}${ed ? JSON.stringify(ed) : ''}`;
 }
 
@@ -879,7 +879,7 @@ function makeDisplayCopy() {
     const cw = Math.max(1, Math.round(w * dpr()));
     const ch = Math.max(1, Math.round((w / a) * dpr()));
     const key = dispKey(set, id);
-    const edit = editOf(photo(id));
+    const edit = cropOf(photo(id));
     if (edit) {
       // cropped: render the crop once, at display size, in this idle moment
       const c = renderEdited(e.img, edit, cw);
@@ -955,7 +955,120 @@ function preloadAround() {
 /* ------------------------------------------------------------ edits (straighten & crop) */
 
 const IDENTITY = { angle: 0, crop: { x: 0, y: 0, w: 1, h: 1 }, aspect: 'free' };
+// A photo's edit: { angle, crop, aspect, levels? }. Straighten & crop are
+// shared by the looks of a bracket; levels belong to one look.
 const editOf = (p) => (p && S.edits[p.key]) || null;
+const hasGeometry = (e) =>
+  !!e && !!e.crop && (Math.abs(e.angle || 0) >= 0.001 || e.crop.x > 1e-4 || e.crop.y > 1e-4 || e.crop.w < 0.9999 || e.crop.h < 0.9999);
+// the edit if it straightens or crops (what every crop-drawing path needs)
+const cropOf = (p) => {
+  const e = editOf(p);
+  return hasGeometry(e) ? e : null;
+};
+const lvIdentity = (lv) => !lv || (lv.b === 0 && lv.w === 255 && Math.abs(lv.g - 1) < 0.005);
+const levelsOf = (p) => {
+  const e = editOf(p);
+  return e && !lvIdentity(e.levels) ? e.levels : null;
+};
+// "cropped", "levels" or both, for captions and badges
+const editLabel = (p) => [cropOf(p) && 'cropped', levelsOf(p) && 'levels'].filter(Boolean).join(' · ');
+
+// Merge a change into a photo's edit; nothing left to do = no edit at all.
+function setEdit(key, patch) {
+  const e = { ...IDENTITY, crop: { ...IDENTITY.crop }, ...(S.edits[key] || {}), ...patch };
+  if (lvIdentity(e.levels)) delete e.levels;
+  if (!hasGeometry(e) && !e.levels) delete S.edits[key];
+  else S.edits[key] = e;
+}
+
+/* ------------------------------------------------------------ levels */
+
+/* Levels: black point b and white point w (0–255) and grey g (a gamma; 1 =
+   unchanged, above 1 brighter). out = ((in − b) / (w − b)) ^ (1 / g), on each
+   of R, G, B. On screen it's an SVG colour lookup applied by the GPU, so
+   flipping and dragging cost nothing extra; on export the same table is
+   applied to the pixels. */
+const LV_NONE = { b: 0, g: 1, w: 255 };
+function levelsLut(lv) {
+  const t = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) {
+    const x = Math.min(1, Math.max(0, (i - lv.b) / (lv.w - lv.b)));
+    t[i] = Math.round(255 * Math.pow(x, 1 / lv.g));
+  }
+  return t;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+let lvDefs = null;
+const lvFilters = new Map(); // "b_w_g" -> filter id
+function makeLevelsFilter(id) {
+  if (!lvDefs) {
+    lvDefs = document.createElementNS(SVG_NS, 'svg');
+    lvDefs.setAttribute('aria-hidden', 'true');
+    lvDefs.setAttribute('width', '0');
+    lvDefs.setAttribute('height', '0');
+    lvDefs.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+    document.body.append(lvDefs);
+  }
+  const f = document.createElementNS(SVG_NS, 'filter');
+  f.id = id;
+  f.setAttribute('color-interpolation-filters', 'sRGB');
+  for (const [k, v] of [['x', '0'], ['y', '0'], ['width', '1'], ['height', '1']]) f.setAttribute(k, v);
+  const ct = document.createElementNS(SVG_NS, 'feComponentTransfer');
+  for (const c of ['feFuncR', 'feFuncG', 'feFuncB']) {
+    const fn = document.createElementNS(SVG_NS, c);
+    fn.setAttribute('type', 'table');
+    ct.append(fn);
+  }
+  f.append(ct);
+  lvDefs.append(f);
+  return f;
+}
+function setLevelsTable(f, lv) {
+  const vals = Array.from(levelsLut(lv), (v) => (v / 255).toFixed(4)).join(' ');
+  for (const fn of f.querySelectorAll('feFuncR, feFuncG, feFuncB')) fn.setAttribute('tableValues', vals);
+}
+function levelsFilter(lv) {
+  const k = `${lv.b}_${lv.w}_${lv.g.toFixed(2)}`;
+  let id = lvFilters.get(k);
+  if (!id) {
+    id = 'lv-' + k.replace('.', 'p');
+    setLevelsTable(makeLevelsFilter(id), lv);
+    lvFilters.set(k, id);
+  }
+  return `url(#${id})`;
+}
+// The CSS filter for a photo on screen (the live one while you drag).
+function levelsCss(p) {
+  if (LV && LV.key === p.key) return 'url(#lv-live)';
+  const lv = levelsOf(p);
+  return lv ? levelsFilter(lv) : '';
+}
+function showLevels(node, p) {
+  if (node && node.style) node.style.filter = levelsCss(p);
+  return node;
+}
+
+// Levels into the pixels (export, the picks view), a band of rows at a time.
+function bakeLevels(canvas, lv) {
+  if (!lv || lvIdentity(lv)) return canvas;
+  const t = levelsLut(lv);
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const rows = Math.max(1, Math.floor(2_000_000 / W));
+  for (let y = 0; y < canvas.height; y += rows) {
+    const h = Math.min(rows, canvas.height - y);
+    const im = ctx.getImageData(0, y, W, h);
+    const d = im.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = t[d[i]];
+      d[i + 1] = t[d[i + 1]];
+      d[i + 2] = t[d[i + 2]];
+    }
+    ctx.putImageData(im, 0, y);
+  }
+  return canvas;
+}
 
 function coverScale(W, H, deg) {
   const t = (Math.abs(deg) * Math.PI) / 180;
@@ -1191,10 +1304,20 @@ function caption(p, pos, count) {
   c.append(key);
   c.append(el('span', 'sim', p.kind === 'video' ? 'Video' : p.filmSim || (count > 1 ? `Look ${pos + 1}` : 'Photo')));
   c.append(el('span', 'file', p.name));
-  if (editOf(p)) c.append(el('span', 'edited', 'cropped'));
+  if (editOf(p)) c.append(el('span', 'edited', editLabel(p)));
   if (S.exported.has(p.key)) c.append(el('span', 'exported', 'exported'));
-  if (p.kind !== 'video') c.append(cropButton(pos));
+  if (p.kind !== 'video') c.append(cropButton(pos), levelsButton(pos));
   return c;
+}
+
+function levelsButton(pos) {
+  const b = el('button', 'tool', 'Levels');
+  b.title = 'Levels (V)';
+  b.onclick = (e) => {
+    e.stopPropagation();
+    openLevels(pos);
+  };
+  return b;
 }
 
 function cropButton(pos) {
@@ -1270,7 +1393,7 @@ function render() {
     frame.onclick = () => (lastPointer === 'touch' ? tapLook(pos) : openSolo(pos));
     frame.dataset.photo = id; // for the loupe
     frame.dataset.src = 'card';
-    const edit = editOf(p);
+    const edit = cropOf(p);
     const entry = getImage(previewUrl(id), 0.1);
     let sharp = false;
     const showPreview = (img) => {
@@ -1278,12 +1401,12 @@ function render() {
       sharp = true;
       const node = displayCopy(previewUrl(id), set, id) || (edit ? cropView(img, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax) : img);
       node.classList.add('ready');
-      frame.replaceChildren(node);
+      frame.replaceChildren(showLevels(node, p));
       if (S.showHist) {
         // a word-sized histogram in the caption, after the simulation name
         const cap = look.querySelector('.caption');
         const sim = cap && cap.querySelector('.sim');
-        if (sim) sim.after(histCanvas(node, 56, 14, 'hist-mini'));
+        if (sim) sim.after(histCanvas(node, 56, 14, 'hist-mini', levelsOf(p)));
       }
     };
     if (entry.done) showPreview(entry.img); // cached: sharp immediately
@@ -1295,8 +1418,8 @@ function render() {
         if (edit) {
           const v = cropView(timg, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax);
           v.classList.add('lowres');
-          frame.replaceChildren(v);
-        } else frame.replaceChildren(placeholderImg(timg, p, frame));
+          frame.replaceChildren(showLevels(v, p));
+        } else frame.replaceChildren(showLevels(placeholderImg(timg, p, frame), p));
       };
       const ready = thumbReady(id);
       if (ready) showThumb(ready);
@@ -1346,7 +1469,7 @@ function layoutStage(stage, set) {
   const gap = parseFloat(getComputedStyle(stage).columnGap) || 10;
   // the shape on screen: a crop changes it
   const p0 = photo(set.photos[0]);
-  const ed = editOf(p0);
+  const ed = cropOf(p0);
   const a = photoAspect(p0) * (ed ? ed.crop.w / ed.crop.h : 1);
   const shape = stageShape(SW, SH, gap, set.photos.length, a);
   if (shape) {
@@ -1701,6 +1824,7 @@ function openSolo(pos, opts = {}) {
 }
 
 function closeSolo() {
+  if (LV) closeLevels(false);
   soloToken++; // anything still pending for the large view is now stale
   clearTimeout(fullTimer);
   clearOverlays($('#solo'));
@@ -1753,11 +1877,11 @@ function renderSolo() {
       node.style.height = '';
       node.style.transform = '';
     }
-    frame.replaceChildren(node);
+    frame.replaceChildren(showLevels(node, p));
     const old = $('#solo-hist');
     if (old) old.remove();
-    if (S.showHist && level !== 'thumb') {
-      const h = histCanvas(node, 220, 64, '');
+    if (S.showHist && level !== 'thumb' && !LV) {
+      const h = histCanvas(node, 220, 64, '', levelsOf(p));
       h.id = 'solo-hist';
       solo.append(h);
     }
@@ -1766,7 +1890,7 @@ function renderSolo() {
     if (level === 'thumb') clearOverlays(solo);
     else requestAnimationFrame(() => token === soloToken && S.solo && applyOverlays(solo, node, id, 'card', { zoomed: S.solo.zoom }));
   };
-  const edit = editOf(p);
+  const edit = cropOf(p);
   const sharper = (level) => frame.dataset.id === id && (frame.dataset.level === 'full' || (level === 'thumb' && frame.dataset.level === 'preview'));
 
   // 1. something on screen in this frame: the preview if ready, else the thumbnail
@@ -1888,8 +2012,8 @@ function renderSoloCaption() {
   }
   c.classList.toggle('flagged', S.flags.has(p.key));
   c.append(el('span', 'sim', p.filmSim || 'Photo'), el('span', 'file', p.name));
-  if (editOf(p)) c.append(el('span', 'edited', 'cropped'));
-  c.append(cropButton(S.solo.pos));
+  if (editOf(p)) c.append(el('span', 'edited', editLabel(p)));
+  c.append(cropButton(S.solo.pos), levelsButton(S.solo.pos));
   $('#solo-caption').replaceWith(c);
 }
 
@@ -1947,14 +2071,14 @@ function openEditor(pos) {
   if (!set || set.kind === 'video') return;
   pos = pos ?? (S.solo ? S.solo.pos : S.hoverPos ?? 0);
   const p = photo(set.photos[pos]);
-  const existing = editOf(p) || IDENTITY;
+  const existing = cropOf(p) || IDENTITY;
   S.editor = {
     set,
     pos,
     img: null,
     angle: existing.angle,
     crop: { ...existing.crop },
-    aspect: (editOf(p) && existing.aspect) || 'orig',
+    aspect: (cropOf(p) && existing.aspect) || 'orig',
   };
   $('#editor').hidden = false;
   $('#angle').value = existing.angle;
@@ -1975,8 +2099,8 @@ function closeEditor(commit) {
     // composition is shared by every look in the bracket, so apply to all
     for (const id of ed.set.photos) {
       const key = photo(id).key;
-      if (isIdentity) delete S.edits[key];
-      else S.edits[key] = { angle: +ed.angle.toFixed(2), crop: { ...ed.crop }, aspect: ed.aspect };
+      if (isIdentity) setEdit(key, { angle: 0, crop: { ...IDENTITY.crop }, aspect: IDENTITY.aspect });
+      else setEdit(key, { angle: +ed.angle.toFixed(2), crop: { ...ed.crop }, aspect: ed.aspect });
     }
     saveEdits();
   }
@@ -2207,7 +2331,7 @@ async function renderStaged() {
   if (items.length - vids) parts.push(`${items.length - vids} photo${items.length - vids === 1 ? '' : 's'}`);
   if (vids) parts.push(`${vids} video${vids === 1 ? '' : 's'}`);
   const edited = items.filter((p) => editOf(p)).length;
-  if (edited) parts.push(`${edited} cropped`);
+  if (edited) parts.push(`${edited} edited`);
   const raws = rawsOf(items);
   const rawBytes = [...raws.values()].reduce((a, p) => a + p.rawSize, 0);
   $('#raw-opt').hidden = !raws.size;
@@ -2238,7 +2362,7 @@ async function renderStaged() {
     if (written(p)) meta.append(el('span', 'there', 'in folder'));
     else tile.classList.add('pending'); // will be written on export: outlined
     if (p.kind === 'video') tile.append(el('span', 'badge', 'video'));
-    else if (editOf(p)) tile.append(el('span', 'badge', 'cropped'));
+    else if (editOf(p)) tile.append(el('span', 'badge', editLabel(p)));
     const rm = el('button', 'remove', '×');
     rm.title = 'Unstage';
     rm.onclick = (e) => {
@@ -2272,7 +2396,7 @@ async function renderStaged() {
       img.decoding = 'async';
       img.src = mediaUrl(previewUrl(p.id));
       const edit = editOf(p);
-      img.decode().then(() => thumb.append(edit ? renderEdited(img, edit, 700) : img), () => {});
+      img.decode().then(() => thumb.append(edit ? bakeLevels(renderEdited(img, edit, 700), levelsOf(p)) : img), () => {});
     };
     io.observe(thumb);
     grid.append(tile);
@@ -2344,7 +2468,7 @@ async function doExport() {
       }
     }
     for (const p of edited) {
-      tick(p.name + ' (cropping)');
+      tick(p.name + ' (editing)');
       try {
         const res = await exportEdited(p, editOf(p));
         if (res.skipped) skipped++;
@@ -2483,7 +2607,7 @@ async function exportEdited(p, edit) {
   img.decoding = 'async';
   img.src = mediaUrl(fullUrl(p.id));
   await img.decode();
-  const canvas = renderEdited(img, edit);
+  const canvas = bakeLevels(renderEdited(img, edit), levelsOf(p));
   const w = canvas.width;
   const h = canvas.height;
   const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
@@ -2494,6 +2618,226 @@ async function exportEdited(p, edit) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'export failed');
   return data;
+}
+
+/* ------------------------------------------------------------ levels editor */
+
+/* V: a histogram of the look in the large view with three handles under it,
+   black, grey and white. The photo and the histogram follow as you drag; Done
+   keeps it (exported like a crop), Cancel puts it back. */
+let LV = null; // { key, id, b, g, w, sel, sample, base }
+const LV_HANDLES = ['b', 'g', 'w'];
+
+function openLevels(pos) {
+  const set = S.view[S.idx];
+  if (!set || set.kind === 'video') return;
+  if (!S.solo) openSolo(pos ?? selectedPos(set) ?? S.hoverPos ?? 0);
+  else if (pos != null && pos !== S.solo.pos) {
+    S.solo.pos = pos;
+    renderSolo();
+  }
+  const p = photo(set.photos[S.solo.pos]);
+  const cur = levelsOf(p) || LV_NONE;
+  LV = { key: p.key, id: p.id, b: cur.b, g: cur.g, w: cur.w, sel: 'g', sample: null, base: null };
+  if (!lvFilters.has('live')) {
+    makeLevelsFilter('lv-live');
+    lvFilters.set('live', 'lv-live');
+  }
+  const old = $('#solo-hist');
+  if (old) old.remove();
+  $('#levels').hidden = false;
+  $('#levels-title').textContent = `Levels · ${p.filmSim || p.name}`;
+  $('#solo').classList.add('levels-on');
+  updateLevels();
+  showLevels($('#solo-frame').firstElementChild, p);
+  levelsSample(p).then((sample) => {
+    if (!LV || LV.id !== p.id || !sample) return;
+    LV.sample = sample;
+    LV.base = lumaHist(sample, null);
+    drawLevels();
+  });
+}
+
+function closeLevels(commit) {
+  if (!LV) return;
+  const { key, id } = LV;
+  const lv = { b: LV.b, g: +LV.g.toFixed(2), w: LV.w };
+  LV = null;
+  $('#levels').hidden = true;
+  $('#solo').classList.remove('levels-on');
+  if (commit) {
+    setEdit(key, { levels: lvIdentity(lv) ? undefined : lv });
+    saveEdits();
+    render(); // the 3-up and the large view, with the new look
+    if (!$('#staged').hidden) renderStaged();
+  } else if (S.solo) {
+    const node = $('#solo-frame').firstElementChild;
+    if (node && S.lib.photos[id]) {
+      showLevels(node, S.lib.photos[id]);
+      if (TOOLS.clip) applyOverlays($('#solo'), node, id, 'card', { zoomed: S.solo.zoom });
+    }
+  }
+}
+
+// A small copy of the preview (as cropped) to count from.
+async function levelsSample(p) {
+  const img = await getImage(previewUrl(p.id), 0).promise;
+  if (!img || !img.naturalWidth) return null;
+  const crop = cropOf(p);
+  const src = crop ? renderEdited(img, crop, 360) : img;
+  const w = Math.min(360, srcW(src));
+  const h = Math.max(1, Math.round((w * srcH(src)) / srcW(src)));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(src, 0, 0, w, h);
+  try {
+    return ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return null;
+  }
+}
+
+// 256-bin luminance histogram of the sample, through a table if given.
+function lumaHist(d, t) {
+  const bins = new Float64Array(256);
+  let lo = 0;
+  let hi = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = t ? t[d[i]] : d[i];
+    const g = t ? t[d[i + 1]] : d[i + 1];
+    const b = t ? t[d[i + 2]] : d[i + 2];
+    bins[Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b)]++;
+    if (r === 0 && g === 0 && b === 0) lo++;
+    if (r === 255 || g === 255 || b === 255) hi++;
+  }
+  const n = d.length / 4 || 1;
+  return { bins, lo: lo / n, hi: hi / n };
+}
+
+// where the grey handle sits: the input that comes out as middle grey
+const greyAt = (lv) => lv.b + (lv.w - lv.b) * Math.pow(0.5, lv.g);
+
+function setLevelsHandle(h, v) {
+  if (!LV) return;
+  v = Math.round(v);
+  if (h === 'b') LV.b = clamp(v, 0, LV.w - 2);
+  else if (h === 'w') LV.w = clamp(v, LV.b + 2, 255);
+  else {
+    const t = clamp((v - LV.b) / (LV.w - LV.b), 0.01, 0.99);
+    LV.g = clamp(Math.round((Math.log(t) / Math.log(0.5)) * 100) / 100, 0.1, 9.99);
+  }
+  updateLevels();
+}
+
+let lvClipFrame = 0;
+function updateLevels() {
+  const f = document.getElementById('lv-live');
+  if (f) setLevelsTable(f, LV);
+  drawLevels();
+  // clipping warnings follow the handles too (once a frame at most)
+  if (TOOLS.clip && S.solo && !lvClipFrame) {
+    lvClipFrame = requestAnimationFrame(() => {
+      lvClipFrame = 0;
+      const node = $('#solo-frame').firstElementChild;
+      if (LV && S.solo && node) applyOverlays($('#solo'), node, LV.id, 'card', { zoomed: S.solo.zoom });
+    });
+  }
+}
+
+// The panel: the histogram after levels in ink over the one before it, faint;
+// handles at their input levels; values under them; what clips at each end.
+function drawLevels() {
+  if (!LV) return;
+  const c = $('#levels-hist');
+  const W = 300;
+  const H = 72;
+  c.width = Math.round(W * dpr());
+  c.height = Math.round(H * dpr());
+  c.style.width = W + 'px';
+  c.style.height = H + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr(), dpr());
+  if (LV.sample && LV.base) {
+    const out = lumaHist(LV.sample, levelsLut(LV));
+    let max = 1;
+    for (const h of [LV.base.bins, out.bins]) for (let i = 2; i < 254; i++) max = Math.max(max, h[i]);
+    const area = (bins, fill) => {
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      for (let i = 0; i < 256; i++) ctx.lineTo((i / 255) * W, H - Math.min(1, bins[i] / max) * (H - 1));
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+    };
+    area(LV.base.bins, 'rgba(233, 230, 223, 0.13)');
+    area(out.bins, 'rgba(233, 230, 223, 0.62)');
+    const pct = (v) => (v >= 0.0005 ? `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%` : null);
+    const bits = [];
+    if (pct(out.lo)) bits.push(`${pct(out.lo)} black`);
+    if (pct(out.hi)) bits.push(`${pct(out.hi)} white`);
+    $('#lv-clip').textContent = bits.length ? `clipped: ${bits.join(' · ')}` : 'nothing clipped';
+  }
+  const at = { b: LV.b, g: greyAt(LV), w: LV.w };
+  for (const h of LV_HANDLES) {
+    const x = `${(at[h] / 255) * 100}%`;
+    const handle = $(`#levels-track .lv-${h}`);
+    handle.style.left = x;
+    handle.classList.toggle('sel', LV.sel === h);
+    const num = $(`#lv-${h}`);
+    num.style.left = x;
+    num.textContent = h === 'g' ? LV.g.toFixed(2) : String(LV[h]);
+    num.classList.toggle('sel', LV.sel === h);
+  }
+}
+
+function bindLevels() {
+  const track = $('#levels-track');
+  let drag = null;
+  const valueAt = (x) => ((x - track.getBoundingClientRect().left) / track.getBoundingClientRect().width) * 255;
+  track.addEventListener('pointerdown', (e) => {
+    if (!LV) return;
+    e.preventDefault();
+    const v = valueAt(e.clientX);
+    const at = { b: LV.b, g: greyAt(LV), w: LV.w };
+    // the handle under the pointer, else the nearest
+    drag = e.target.dataset.h || LV_HANDLES.reduce((a, h) => (Math.abs(at[h] - v) < Math.abs(at[a] - v) ? h : a), 'g');
+    LV.sel = drag;
+    track.setPointerCapture(e.pointerId);
+    setLevelsHandle(drag, v);
+  });
+  track.addEventListener('pointermove', (e) => drag && setLevelsHandle(drag, valueAt(e.clientX)));
+  const end = () => (drag = null);
+  track.addEventListener('pointerup', end);
+  track.addEventListener('pointercancel', end);
+  $('#lv-reset').onclick = () => {
+    if (!LV) return;
+    Object.assign(LV, LV_NONE);
+    updateLevels();
+  };
+  $('#lv-cancel').onclick = () => closeLevels(false);
+  $('#lv-done').onclick = () => closeLevels(true);
+}
+
+// Keys while Levels is open; true when the key was used.
+function levelsKey(e, k) {
+  if (k === 'Escape') closeLevels(false);
+  else if (k === 'Enter' || k === 'v' || k === 'V') closeLevels(true);
+  else if (k === 'Tab') {
+    const i = LV_HANDLES.indexOf(LV.sel);
+    LV.sel = LV_HANDLES[(i + (e.shiftKey ? 2 : 1)) % 3];
+    drawLevels();
+  } else if (k === 'ArrowLeft' || k === 'ArrowRight') {
+    const step = (k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
+    const at = LV.sel === 'g' ? greyAt(LV) : LV[LV.sel];
+    setLevelsHandle(LV.sel, at + step);
+  } else if (k === 'r' || k === 'R') $('#lv-reset').click();
+  else if (k === 'z' || k === 'Z') toggleZoom();
+  else if (k === 'f' || k === 'F') toggleFullscreen();
+  else return false;
+  return true;
 }
 
 /* ------------------------------------------------------------ touch */
@@ -2746,6 +3090,7 @@ function bindUi() {
   $('#folder').onclick = () => (S.lib ? openFolder(S.lib.root) : showWelcome());
   bindSurvey();
   bindTouch();
+  bindLevels();
   $('#staged-btn').onclick = () => openStaged();
   $('#ov-btn').onclick = () => openOverview();
   $('#lib-btn').onclick = () => (LIB.open ? closeLibrary() : openLibrary());
@@ -2975,15 +3320,30 @@ function histogramOf(src) {
   return out;
 }
 
-function histCanvas(src, W, H, cls) {
+// A histogram as levels would leave it: each channel's bins moved through the
+// same table (the luminance is approximate, the channels exact).
+function leveledHist(hs, lv) {
+  const t = levelsLut(lv);
+  const move = (arr) => {
+    const out = new Float64Array(BINS);
+    for (let i = 0; i < BINS; i++) out[t[i * 4 + 2] >> 2] += arr[i];
+    return out;
+  };
+  const n = hs.l.reduce((a, v) => a + v, 0) || 1;
+  const l = move(hs.l);
+  return { r: move(hs.r), g: move(hs.g), b: move(hs.b), l, clipLo: l[0] / n > 0.002, clipHi: l[BINS - 1] / n > 0.002 };
+}
+
+function histCanvas(src, W, H, cls, lv) {
   const c = document.createElement('canvas');
   c.className = 'hist' + (cls ? ' ' + cls : '');
   c.width = Math.round(W * dpr());
   c.height = Math.round(H * dpr());
   c.style.width = W + 'px';
   c.style.height = H + 'px';
-  const hs = histogramOf(src);
+  let hs = histogramOf(src);
   if (!hs) return c;
+  if (lv) hs = leveledHist(hs, lv);
   const ctx = c.getContext('2d');
   ctx.scale(dpr(), dpr());
   // scale to the tallest interior bin so a spike at either end doesn't flatten the rest
@@ -3054,6 +3414,7 @@ const MENU = [
     { id: 'unpick', label: 'Unpick this shot', key: '0', press: { key: '0', code: 'Digit0' }, when: inViewer },
     { id: 'nextunpicked', label: 'Next unpicked shot', key: 'U', press: { key: 'u' }, when: inViewer },
     { id: 'crop', label: 'Crop & straighten…', key: 'C', press: { key: 'c' }, when: isPhotoSet },
+    { id: 'levels', label: 'Levels…', key: 'V', press: { key: 'v' }, when: isPhotoSet, on: () => !!LV },
     { id: 'delete', label: 'Delete from card', key: '⌘⌫', press: { key: 'Backspace', metaKey: true }, when: () => inViewer() && !LITE },
     { id: 'undo', label: 'Undo delete', key: '⌘Z', press: { key: 'z', metaKey: true }, when: () => lastDeletes.some((d) => Date.now() < d.until) },
   ]],
@@ -3220,6 +3581,12 @@ function onKey(e) {
     return e.preventDefault();
   }
 
+  if (LV) {
+    // the photo stays put while Levels is open
+    levelsKey(e, k);
+    return e.preventDefault();
+  }
+
   if (!$('#overview').hidden) {
     if (k === 'ArrowRight' || k === 'j' || k === 'J') moveOverviewCursor(OV.cursor + 1);
     else if (k === 'ArrowLeft' || k === 'k' || k === 'K') moveOverviewCursor(OV.cursor - 1);
@@ -3351,6 +3718,10 @@ function onKey(e) {
     case 'c':
     case 'C':
       openEditor();
+      break;
+    case 'v':
+    case 'V':
+      if (set && set.kind !== 'video') openLevels(S.solo ? S.solo.pos : selectedPos(set) ?? S.hoverPos ?? 0);
       break;
     case 'Escape':
       if (S.solo) closeSolo();

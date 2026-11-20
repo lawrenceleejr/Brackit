@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Levels**
+- `V` (or Levels in a look's caption) opens levels for the look in the large
+  view: its histogram with black, grey and white points under it. The photo,
+  the histogram and the clipping warnings follow as you drag; the panel says
+  how much clips at each end. Exported like a crop (re-encoded with the
+  camera's metadata kept), in the desktop app and in Brackit Lite. Levels are
+  per look; straighten and crop stay shared by the bracket.
+
 **Brackit Lite**
 - A web version at lawrenceleejr.github.io/Brackit/lite/: nothing to
   install, on iPhone and iPad (with a card reader) or any computer. It reads

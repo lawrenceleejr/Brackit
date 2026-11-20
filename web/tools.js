@@ -84,7 +84,7 @@ function drawLoupe(ev) {
   lp.style.top = `${ev.y - LOUPE_D / 2}px`;
   const p = t.src === 'out' ? S.out && S.out.photos[t.id] : S.lib && S.lib.photos[t.id];
   // (inside a CSS crop view the image under the cursor is the whole picture)
-  const edit = t.src === 'card' && p && !t.node.closest('.crop-view') ? editOf(p) : null;
+  const edit = t.src === 'card' && p && !t.node.closest('.crop-view') ? cropOf(p) : null;
   // map to the original: through the crop rectangle (rotation ignored)
   let ux = fx;
   let uy = fy;
@@ -187,12 +187,17 @@ async function applyOverlays(host, node, id, src, opts = {}) {
   };
   const nr = place();
   if (!nr.width) return;
-  if (TOOLS.clip) layer.append(clippingCanvas(node, nr.width, nr.height));
+  if (TOOLS.clip) {
+    // as levels leave it (the live levels while they're being dragged)
+    const p = src === 'card' && S.lib ? S.lib.photos[id] : null;
+    const lv = p ? (LV && LV.key === p.key ? LV : levelsOf(p)) : null;
+    layer.append(clippingCanvas(node, nr.width, nr.height, lv && !lvIdentity(lv) ? levelsLut(lv) : null));
+  }
   if (TOOLS.notes) {
     const m = await photoMeta(id, src);
     if (!m || !layer.isConnected) return;
     const p = src === 'out' ? S.out && S.out.photos[id] : S.lib && S.lib.photos[id];
-    const svg = annotationSvg(m, src === 'card' && p ? editOf(p) : null);
+    const svg = annotationSvg(m, src === 'card' && p ? cropOf(p) : null);
     if (svg) layer.append(svg);
   }
 }
@@ -200,7 +205,7 @@ async function applyOverlays(host, node, id, src, opts = {}) {
 /* Clipping: hatch pixels that are blown (any channel ≥ 250) in red and
    crushed (all channels ≤ 5) in blue. Diagonal stripes keep the photo
    visible underneath. */
-function clippingCanvas(node, w, h) {
+function clippingCanvas(node, w, h, t) {
   const d = Math.min(dpr(), 1600 / w);
   const cw = Math.max(1, Math.round(w * d));
   const ch = Math.max(1, Math.round(h * d));
@@ -226,9 +231,9 @@ function clippingCanvas(node, w, h) {
   for (let y = 0, i = 0; y < ch; y++) {
     for (let x = 0; x < cw; x++, i += 4) {
       if (((x + y) / stripe) & 1) continue; // gaps between stripes
-      const r = px[i];
-      const g = px[i + 1];
-      const b = px[i + 2];
+      const r = t ? t[px[i]] : px[i];
+      const g = t ? t[px[i + 1]] : px[i + 1];
+      const b = t ? t[px[i + 2]] : px[i + 2];
       if (r >= 250 || g >= 250 || b >= 250) {
         o[i] = 255;
         o[i + 1] = 40;

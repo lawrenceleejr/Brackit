@@ -70,5 +70,11 @@ Anything slower feels sluggish.
 - The photos are the content: minimal chrome, one accent colour (amber =
   picked), Tufte-style data displays (no chart junk).
 - Never modify files on the card except through the delete-with-undo path.
+- **Edits** (`S.edits[key]`): `{ angle, crop, aspect, levels? }`. Straighten
+  and crop are shared by a bracket's looks, levels are per look. Code that
+  draws crops uses `cropOf(p)`; `editOf(p)` (any edit) decides re-encoding on
+  export. Levels show on screen as an SVG colour filter (`showLevels`), never
+  baked into display copies; `bakeLevels` applies them to pixels on export.
+  Change edits with `setEdit` so one never wipes the other.
 - Every tool needs a key and an entry in the Menu (`MENU` in `web/app.js`)
   and in the Mac menu bar (`src-tauri/src/gui.rs`).
