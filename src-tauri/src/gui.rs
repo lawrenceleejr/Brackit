@@ -124,6 +124,7 @@ fn build_menu<R: tauri::Runtime>(h: &tauri::AppHandle<R>) -> tauri::Result<tauri
                     &item("nextunpicked", "Next Unpicked Shot   U")?,
                     &P::separator(h)?,
                     &item("crop", "Crop & Straighten…   C")?,
+                    &item("levels", "Levels…   V")?,
                     &P::separator(h)?,
                     &item("delete", "Delete from Card   ⌘⌫")?,
                     &item("undo", "Undo Delete   ⌘Z")?,

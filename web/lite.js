@@ -545,7 +545,7 @@
     const cw = edit.crop.w * srcW(img);
     const ch = edit.crop.h * srcH(img);
     const fit = Math.min(1, Math.sqrt(MAX_AREA / (cw * ch)));
-    const canvas = renderEdited(img, edit, Math.floor(cw * fit));
+    const canvas = bakeLevels(renderEdited(img, edit, Math.floor(cw * fit)), lvIdentity(edit.levels) ? null : edit.levels);
     const w = canvas.width;
     const h = canvas.height;
     const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.95));
@@ -618,7 +618,7 @@
     const total = items.length + (withRaw ? items.filter((p) => p.rawName).length : 0);
     for (const pub of items) {
       const p = photoOf(pub.id);
-      tick(done, total, pub.name + (editOf(pub) ? ' (cropping)' : ''));
+      tick(done, total, pub.name + (editOf(pub) ? ' (editing)' : ''));
       try {
         const file = editOf(pub) && !p.video ? await croppedFile(p, editOf(pub)) : p.file;
         out.push({ file, key: pub.key, mtime: p.mtime, source: p.src });

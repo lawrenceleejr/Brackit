@@ -93,6 +93,23 @@
   <section id="solo" hidden>
     <div id="solo-frame"></div>
     <div id="solo-info" hidden></div>
+    <div id="levels" hidden>
+      <div id="levels-title" class="levels-title"></div>
+      <canvas id="levels-hist"></canvas>
+      <div id="levels-track" title="Drag the black, grey or white point">
+        <span class="lv-h lv-b" data-h="b"></span><span class="lv-h lv-g" data-h="g"></span><span class="lv-h lv-w" data-h="w"></span>
+      </div>
+      <div class="lv-nums"><span id="lv-b" class="num"></span><span id="lv-g" class="num"></span><span id="lv-w" class="num"></span></div>
+      <div class="lv-foot">
+        <span id="lv-clip" class="muted"></span>
+        <span class="lv-keys muted"><kbd>Tab</kbd> point <kbd>←</kbd><kbd>→</kbd> move</span>
+      </div>
+      <div class="lv-actions">
+        <button id="lv-reset" class="btn quiet">Reset <kbd>R</kbd></button>
+        <button id="lv-cancel" class="btn quiet">Cancel <kbd>Esc</kbd></button>
+        <button id="lv-done" class="btn primary">Done <kbd>↵</kbd></button>
+      </div>
+    </div>
     <div id="solo-caption" class="caption"></div>
   </section>
 
@@ -183,6 +200,7 @@
           <dt>A</dt><dd>focus point and faces</dd>
           <dt>I</dt><dd>camera settings, recipe, all metadata</dd>
           <dt>C</dt><dd>straighten and crop</dd>
+          <dt>V</dt><dd>levels: black, grey and white points</dd>
         </dl>
         <dl>
           <dt class="group">Crop</dt><dd></dd>
@@ -190,6 +208,11 @@
           <dt>arrows</dt><dd>move the crop (⇧ further)</dd>
           <dt>− +</dt><dd>smaller / larger crop</dd>
           <dt>1 – 6</dt><dd>free, original (the default), 1:1, 4:5, 16:9, 2.39:1</dd>
+          <dt>↵ / Esc</dt><dd>done / cancel</dd>
+          <dt class="group">Levels</dt><dd></dd>
+          <dt>Tab</dt><dd>next point: black, grey, white</dd>
+          <dt>← →</dt><dd>move it (⇧ ten levels)</dd>
+          <dt>R</dt><dd>reset</dd>
           <dt>↵ / Esc</dt><dd>done / cancel</dd>
           <dt class="group">Export and card</dt><dd></dd>
           <dt>S</dt><dd>your picks (there: R RAW, D folder)</dd>

@@ -43,8 +43,9 @@ probably useful to you as well.
   point and detected faces as the camera recorded them (`A`), and the camera
   settings and film recipe (`I`), with every tag the camera wrote one click
   away.
-- **Straighten and crop** (`C`) before export. The card is never changed;
-  the crop is applied to the exported copy, with the camera data kept.
+- **Straighten and crop** (`C`) and **levels** (`V`: black, grey and white
+  points over a live histogram) before export. The card is never changed;
+  they're applied to the exported copy, with the camera data kept.
 - **Library** (`L`) of your export folder: browse by folder and day, rate
   0–5 stars, flag (`P`), filter, and see each photo's recipe.
 - **Card housekeeping.** Open just a folder or a range of days (or "new since
@@ -129,6 +130,7 @@ can eject the card and carry on later.
 | `W` | clipping warnings: red = blown highlights, blue = crushed shadows |
 | `A` | annotations: focus point and faces |
 | `I` | camera settings, film recipe, all metadata |
+| `V` | levels: drag the black, grey or white point (or `Tab` and `←` `→`); `Enter` done |
 | `C` | straighten and crop: `[` `]` straighten, arrows move, `−` `+` resize, `1`–`6` aspect (original by default), `Enter` done |
 | `G` | overview of every set |
 | `S` / `E` | show picks / export picks; in picks `R` adds RAW, `D` changes the folder, `X` clears unpicked looks after export |
@@ -146,8 +148,9 @@ Every tool is also in the **Menu** (top right) and, on macOS, the menu bar.
 
 - **Nothing on the card is changed** unless you delete something, and deletes
   can be undone for 10 seconds.
-- **Exports are exact copies.** Only cropped photos are re-encoded (at JPEG
-  quality 95, keeping the camera's metadata and film simulation).
+- **Exports are exact copies.** Only cropped or levelled photos are
+  re-encoded (at JPEG quality 95, keeping the camera's metadata and film
+  simulation).
 - **The film recipe readout** uses the community's decoding of Fujifilm's
   metadata (the same as exiftool). If something reads wrong for your camera,
   please open an issue.

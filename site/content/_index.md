@@ -65,7 +65,8 @@ on a photo to look closely.
 - The focus point and any detected faces, as the camera recorded them.
 - The film recipe: simulation, grain, Color Chrome, white balance shift,
   dynamic range, tone, and every other tag in the file.
-- Straighten and crop before export. The card itself is never changed.
+- Straighten and crop, and levels (black, grey and white points over the
+  histogram), applied to the exported copy. The card itself is never changed.
 
 ## Brackit Lite
 

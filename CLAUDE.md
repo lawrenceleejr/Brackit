@@ -70,5 +70,17 @@ Anything slower feels sluggish.
 - The photos are the content: minimal chrome, one accent colour (amber =
   picked), Tufte-style data displays (no chart junk).
 - Never modify files on the card except through the delete-with-undo path.
+- **Edits** (`S.edits[key]`): `{ angle, crop, aspect, levels? }`. Straighten
+  and crop are shared by a bracket's looks, levels are per look. Code that
+  draws crops uses `cropOf(p)`; `editOf(p)` (any edit) decides re-encoding on
+  export. Change edits with `setEdit` so one never wipes the other.
+- **Levels on screen are pixels made ahead, never a filter while flipping**
+  (in software rendering a CSS/SVG filter on a big picture blows the 50 ms
+  budget): `levelledThumb` / `levelledSmall` (tiny, in the key press),
+  `levelledCopy` (display size: idle time, or right after the paint) and
+  `levelledLater` (the large view, a slice at a time). Such canvases carry
+  `data-baked` so histogram, clipping and loupe don't apply levels twice.
+  The SVG filter (`showLevels`, `#lv-live`) is only for dragging in the
+  Levels panel; `bakeLevels` applies them on export.
 - Every tool needs a key and an entry in the Menu (`MENU` in `web/app.js`)
   and in the Mac menu bar (`src-tauri/src/gui.rs`).

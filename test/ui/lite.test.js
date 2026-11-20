@@ -233,7 +233,7 @@ test('Lite: arrow presses paint within 50 ms', async () => {
   await ctx.close();
 });
 
-test('Lite exports picks to a folder, crops with the camera data kept, and never touches the card', async () => {
+test('Lite exports picks to a folder, crops and levels with the camera data kept, and never touches the card', async () => {
   const { ctx, page, errors } = await openLite();
   // the folder picker is the browser's own dialog: stand in a private folder
   await page.evaluate(() => {
@@ -255,6 +255,16 @@ test('Lite exports picks to a folder, crops with the camera data kept, and never
   await page.waitForTimeout(400);
   await page.keyboard.press('3');
   await page.keyboard.press('Enter');
+  // levels on set 3's first look (DSCF0007): black point to 40
+  await page.keyboard.press('j');
+  await page.keyboard.press('1');
+  await page.keyboard.press('v');
+  await page.waitForSelector('#levels:not([hidden])');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape'); // out of the large view
   await page.keyboard.press('s');
   await page.waitForSelector('#staged:not([hidden])');
   if (!(await page.isChecked('#with-raw'))) await page.keyboard.press('r');
@@ -272,7 +282,9 @@ test('Lite exports picks to a folder, crops with the camera data kept, and never
     return out;
   });
   const cardFile = (n) => fs.statSync(path.join(card, 'DCIM', '100_FUJI', n)).size;
-  assert.deepEqual(Object.keys(files).sort(), ['DSCF0002.JPG', 'DSCF0001.RAF', 'DSCF0004.JPG'].sort());
+  assert.deepEqual(Object.keys(files).sort(), ['DSCF0002.JPG', 'DSCF0001.RAF', 'DSCF0004.JPG', 'DSCF0007.JPG'].sort());
+  assert.ok(files['DSCF0007.JPG'].soi && files['DSCF0007.JPG'].fuji, 'levelled JPEG keeps the camera metadata');
+  assert.notEqual(files['DSCF0007.JPG'].size, cardFile('DSCF0007.JPG'), 'levels re-encoded');
   assert.equal(files['DSCF0002.JPG'].size, cardFile('DSCF0002.JPG'), 'exact copy');
   assert.equal(files['DSCF0001.RAF'].size, cardFile('DSCF0001.RAF'), 'RAW copied');
   assert.ok(files['DSCF0004.JPG'].soi && files['DSCF0004.JPG'].fuji, 'cropped JPEG keeps the camera metadata');
