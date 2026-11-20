@@ -1085,7 +1085,16 @@ function bakeLevels(canvas, lv) {
    - the large view: a sharp copy made in small slices, so a key press never
      waits behind it. The live filter is used only while dragging in Levels. */
 function levelledThumb(timg, p) {
-  const c = bakeLevels(makePlaceholder(timg, p, cropOf(p)), levelsOf(p));
+  const c = bakeLevels(makePlaceholder(timg, p, cropOf(p), 240), levelsOf(p));
+  c.dataset.baked = '1';
+  return c;
+}
+
+// A small levelled stand-in from the preview (under a millisecond), shown in
+// the key press while the sharp copy is made just after.
+function levelledSmall(src, p) {
+  const c = bakeLevels(renderEdited(src, cropOf(p) || IDENTITY, 240), levelsOf(p));
+  c.className = 'ready lowres';
   c.dataset.baked = '1';
   return c;
 }
@@ -1218,10 +1227,10 @@ function cloneCanvas(c) {
   d.getContext('2d').drawImage(c, 0, 0);
   return d;
 }
-function makePlaceholder(timg, p, edit) {
+function makePlaceholder(timg, p, edit, size = 640) {
   const a = photoAspect(p);
   const c = document.createElement('canvas');
-  c.width = a >= 1 ? 640 : Math.round(640 * a);
+  c.width = a >= 1 ? size : Math.round(size * a);
   c.height = Math.round(c.width / a);
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'medium';
@@ -1456,8 +1465,19 @@ function render() {
     const showPreview = (img) => {
       if (token !== renderToken || !img.naturalWidth) return;
       sharp = true;
-      const node =
-        displayCopy(previewUrl(id), set, id) || (lv ? levelledCopy(img, set, id) : edit ? cropView(img, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax) : img);
+      let node = displayCopy(previewUrl(id), set, id);
+      if (!node && lv) {
+        // a sharp levelled copy takes a few ms: a small one now, the sharp
+        // one right after this frame (not while a key is held down)
+        const { a, imgMax } = layoutFor(set);
+        node = sizeToFrame(levelledSmall(img, p), frame, a, imgMax);
+        setTimeout(() => {
+          if (token !== renderToken || S.flipping || S.solo) return;
+          const c = displayCopy(previewUrl(id), set, id) || levelledCopy(img, set, id);
+          frame.replaceChildren(showLevels(c, p));
+        }, 0);
+      }
+      if (!node) node = edit ? cropView(img, p, edit, layoutFor(set).lookW, layoutFor(set).imgMax) : img;
       node.classList.add('ready');
       frame.replaceChildren(showLevels(node, p));
       if (S.showHist) {
@@ -1974,9 +1994,9 @@ function renderSolo() {
     if (token !== soloToken || !img || !img.naturalWidth || sharper('preview')) return;
     if (lv) {
       // the 3-up's levelled copy, stretched, at once; then a sharp one
-      const copy = displayCopy(previewUrl(id), set, id);
-      if (copy && !sharper('thumb')) {
-        const c = cloneCanvas(copy);
+      if (!sharper('thumb')) {
+        const copy = displayCopy(previewUrl(id), set, id);
+        const c = copy ? cloneCanvas(copy) : levelledSmall(img, p);
         c.dataset.baked = '1';
         c.classList.add('lowres');
         show(sizeSolo(c), 'thumb');

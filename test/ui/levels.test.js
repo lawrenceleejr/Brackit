@@ -156,7 +156,9 @@ test('the panel: drag and keys change the photo live; Done keeps, Cancel restore
   assert.match(await page.textContent('#solo-caption'), /levels/);
   await page.keyboard.press(' '); // back to the 3-up: the look shows its levels there too
   await page.waitForTimeout(300);
-  assert.match(await page.evaluate(() => $('#stage .look:nth-child(2) .frame').firstElementChild.style.filter), /lv-40_255/);
+  // (there as levelled pixels: a copy made ahead, not a filter)
+  await page.waitForFunction(() => $('#stage .look:nth-child(2) .frame').firstElementChild.dataset.baked === '1');
+  assert.equal(await page.evaluate(() => $('#stage .look:nth-child(2) .frame').firstElementChild.style.filter), '');
 
   // a crop afterwards keeps the levels, and levels keep the crop
   await page.keyboard.press('c');
