@@ -346,6 +346,7 @@ test('Lite on a phone: picks files, stacks the looks, tap to pick, swipe to flip
     await page.waitForTimeout(60);
     await page.tap(sel);
   };
+  await page.waitForTimeout(500); // (taps right after a swipe are the swipe's own)
   await dbl('.look:nth-child(1) .frame');
   await page.waitForSelector('#solo:not([hidden])');
   await page.waitForTimeout(400);
