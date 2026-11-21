@@ -2762,6 +2762,8 @@ function openLevels(pos) {
   $('#levels').hidden = false;
   $('#levels-title').textContent = `Levels · ${p.filmSim || p.name}`;
   $('#solo').classList.add('levels-on');
+  // on a narrow screen the panel spans the width: the photo sits above it
+  $('#solo-frame').style.marginBottom = innerWidth <= 700 ? `${$('#levels').offsetHeight + 8}px` : '';
   drawLevels();
   renderSolo(); // the picture without its kept levels (under the live filter until the GPU copy is up)
   const lv = LV;
@@ -2792,6 +2794,7 @@ function closeLevels(commit) {
   clearTimeout(lvClipTimer);
   $('#levels').hidden = true;
   $('#solo').classList.remove('levels-on');
+  $('#solo-frame').style.marginBottom = '';
   if (commit) {
     setEdit(key, { levels: lvIdentity(lv) ? undefined : lv });
     saveEdits();
