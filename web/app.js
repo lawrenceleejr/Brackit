@@ -1049,7 +1049,21 @@ function levelsCss(p) {
   const lv = levelsOf(p);
   return lv ? levelsFilter(lv) : '';
 }
+/* Pictures go on screen already decoded: images are loaded with
+   decoding="async" (off the main thread), but an element on screen must
+   paint with the page. WebKit (Safari, iPhone, the Mac app) otherwise paints
+   it later on its own, blank or half-done (grey on iPhone) at first, and a
+   copy of an element inherits the setting. The image is decoded already, so
+   "sync" costs nothing. */
+function onScreen(node) {
+  if (!node) return node;
+  if (node.tagName === 'IMG') node.decoding = 'sync';
+  else if (node.querySelectorAll) for (const im of node.querySelectorAll('img')) im.decoding = 'sync';
+  return node;
+}
+
 function showLevels(node, p) {
+  onScreen(node);
   // a display copy made in idle time has its levels in its pixels already
   if (node && node.style) node.style.filter = node.dataset && node.dataset.baked ? '' : levelsCss(p);
   return node;
@@ -1167,7 +1181,7 @@ function placeholderImg(timg, p, frame) {
   const a = photoAspect(p);
   const maxH = S.imgMax || frame.clientHeight || 600;
   const w = Math.max(1, Math.min(frame.clientWidth || 600, maxH * a));
-  const im = timg.cloneNode();
+  const im = onScreen(timg.cloneNode());
   im.className = 'lowres ready';
   im.style.width = `${Math.round(w)}px`;
   im.style.height = `${Math.round(w / a)}px`;
@@ -1184,7 +1198,7 @@ function placeholderImg(timg, p, frame) {
 function cropView(src, p, edit, boxW, maxH) {
   const W = srcW(src) || 1;
   const H = srcH(src) || 1;
-  const img = src.cloneNode();
+  const img = onScreen(src.cloneNode());
   const a = (W * edit.crop.w) / (H * edit.crop.h);
   const w = Math.max(1, Math.min(boxW || 600, (maxH || 600) * a));
   const h = w / a;
@@ -1763,7 +1777,7 @@ function peekAt(e) {
   }
   const put = (img) => {
     if (peekIdx !== i || !img || !img.naturalWidth) return;
-    box.replaceChildren(img.cloneNode());
+    box.replaceChildren(onScreen(img.cloneNode()));
   };
   const ready = thumbReady(shown.id);
   if (ready) put(ready);
@@ -1801,7 +1815,7 @@ function openOverview() {
         const tile = en.target;
         thumbImage(tile.dataset.id).then((img) => {
           if (!img || !img.naturalWidth || !tile.isConnected) return;
-          const c = img.cloneNode();
+          const c = onScreen(img.cloneNode());
           c.alt = '';
           tile.prepend(c);
         });
@@ -2018,7 +2032,7 @@ function renderSolo() {
       else {
         const a = photoAspect(p);
         const w = Math.min(frame.clientWidth, frame.clientHeight * a);
-        node = timg.cloneNode();
+        node = onScreen(timg.cloneNode());
         node.style.width = `${Math.round(w)}px`;
         node.style.height = `${Math.round(w / a)}px`;
         node.style.objectFit = 'cover';
