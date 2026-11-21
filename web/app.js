@@ -882,7 +882,6 @@ function makeDisplayCopy() {
     const key = dispKey(set, id);
     const edit = cropOf(photo(id));
     const lv = levelsOf(photo(id));
-    if (lv) levelsFilter(lv); // (the on-screen filter, ready before it's needed)
     if (edit || lv) {
       // cropped and/or levelled: drawn once, at display size, in this idle
       // moment, so the set shows without any filter at all
@@ -1050,13 +1049,16 @@ function levelsCss(p) {
   return lv ? levelsFilter(lv) : '';
 }
 /* Pictures go on screen already decoded: images are loaded with
-   decoding="async" (off the main thread), but an element on screen must
-   paint with the page. WebKit (Safari, iPhone, the Mac app) otherwise paints
-   it later on its own, blank or half-done (grey on iPhone) at first, and a
-   copy of an element inherits the setting. The image is decoded already, so
-   "sync" costs nothing. */
+   decoding="async" (off the main thread), but in WebKit (Safari, iPhone, the
+   Mac app) an element so marked is painted later on its own, blank or
+   half-done (grey on iPhone) at first, and a copy of an element inherits the
+   setting. There, pictures put on screen are switched to "sync"; they're
+   decoded already or tiny. */
+// (Chromium paints such an element at once anyway, and "sync" there makes the
+// paint wait for decoding instead: only WebKit gets it.)
+const SYNC_DECODE = /Apple/.test(navigator.vendor || '');
 function onScreen(node) {
-  if (!node) return node;
+  if (!node || !SYNC_DECODE) return node;
   if (node.tagName === 'IMG') node.decoding = 'sync';
   else if (node.querySelectorAll) for (const im of node.querySelectorAll('img')) im.decoding = 'sync';
   return node;
