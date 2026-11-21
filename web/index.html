@@ -95,14 +95,14 @@
     <div id="solo-info" hidden></div>
     <div id="levels" hidden>
       <div id="levels-title" class="levels-title"></div>
-      <canvas id="levels-hist"></canvas>
-      <div id="levels-track" title="Drag the black, grey or white point">
-        <span class="lv-h lv-b" data-h="b"></span><span class="lv-h lv-g" data-h="g"></span><span class="lv-h lv-w" data-h="w"></span>
+      <div id="levels-area" title="Drag the black, grey or white point">
+        <canvas id="levels-hist"></canvas>
+        <div id="levels-track"><svg class="lv-h lv-b" data-h="b" viewBox="0 0 16 14" aria-hidden="true"><path d="M8 1.5 L14.5 12.5 L1.5 12.5 Z"/></svg><svg class="lv-h lv-g" data-h="g" viewBox="0 0 16 14" aria-hidden="true"><path d="M8 1.5 L14.5 12.5 L1.5 12.5 Z"/></svg><svg class="lv-h lv-w" data-h="w" viewBox="0 0 16 14" aria-hidden="true"><path d="M8 1.5 L14.5 12.5 L1.5 12.5 Z"/></svg></div>
       </div>
       <div class="lv-nums"><span id="lv-b" class="num"></span><span id="lv-g" class="num"></span><span id="lv-w" class="num"></span></div>
       <div class="lv-foot">
         <span id="lv-clip" class="muted"></span>
-        <span class="lv-keys muted"><kbd>Tab</kbd> point <kbd>←</kbd><kbd>→</kbd> move</span>
+        <span class="lv-keys muted no-touch"><kbd>Tab</kbd> point <kbd>←</kbd><kbd>→</kbd> move</span>
       </div>
       <div class="lv-actions">
         <button id="lv-reset" class="btn quiet">Reset <kbd>R</kbd></button>

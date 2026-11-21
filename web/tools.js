@@ -194,7 +194,7 @@ async function applyOverlays(host, node, id, src, opts = {}) {
     // as levels leave it (the live levels while they're being dragged)
     const p = src === 'card' && S.lib ? S.lib.photos[id] : null;
     // (a levelled copy made ahead has them in its pixels already)
-    const lv = p ? (LV && LV.key === p.key ? LV : node.dataset && node.dataset.baked ? null : levelsOf(p)) : null;
+    const lv = !p || (node.dataset && node.dataset.baked) ? null : LV && LV.key === p.key ? LV : levelsOf(p);
     layer.append(clippingCanvas(node, nr.width, nr.height, lv && !lvIdentity(lv) ? levelsLut(lv) : null));
   }
   if (TOOLS.notes) {

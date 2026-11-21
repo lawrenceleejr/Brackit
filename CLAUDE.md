@@ -80,7 +80,9 @@ Anything slower feels sluggish.
   `levelledCopy` (display size: idle time, or right after the paint) and
   `levelledLater` (the large view, a slice at a time). Such canvases carry
   `data-baked` so histogram, clipping and loupe don't apply levels twice.
-  The SVG filter (`showLevels`, `#lv-live`) is only for dragging in the
-  Levels panel; `bakeLevels` applies them on export.
+  While dragging in the Levels panel the photo is a WebGL canvas
+  (`levelsGL`: the table as a 256×1 texture), updated at most once a frame
+  (`scheduleLevels`); the SVG filter (`showLevels`, `#lv-live`) is only the
+  fallback without WebGL. `bakeLevels` applies them on export.
 - Every tool needs a key and an entry in the Menu (`MENU` in `web/app.js`)
   and in the Mac menu bar (`src-tauri/src/gui.rs`).
