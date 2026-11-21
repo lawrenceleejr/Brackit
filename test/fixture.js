@@ -95,20 +95,24 @@ function exifApp1({ dateTime, subSec, orientation = 1, filmMode, saturation, mod
   return Buffer.concat([seg, payload]);
 }
 
-function mpfApp2(previewOffset, previewSize, mainSize) {
-  // MP Index IFD with MPEntry (2 entries x 16 bytes), little endian.
-  const entries = Buffer.alloc(32);
+// images: [{ offset, size, type }] after the main one (offsets relative to
+// the MPF TIFF header, as the format has them).
+function mpfApp2(images, mainSize) {
+  // MP Index IFD with an MPEntry (16 bytes) per image, little endian.
+  const entries = Buffer.alloc(16 * (1 + images.length));
   entries.writeUInt32LE(0x030000, 0);
   entries.writeUInt32LE(mainSize, 4);
   entries.writeUInt32LE(0, 8);
-  entries.writeUInt32LE(0x010001, 16);
-  entries.writeUInt32LE(previewSize, 20);
-  entries.writeUInt32LE(previewOffset, 24);
+  images.forEach((im, i) => {
+    entries.writeUInt32LE(im.type, 16 * (i + 1));
+    entries.writeUInt32LE(im.size, 16 * (i + 1) + 4);
+    entries.writeUInt32LE(im.offset, 16 * (i + 1) + 8);
+  });
   const d = ifd(
     [
       { tag: 0xb000, type: 7, count: 4, value: Buffer.from('0100') },
-      { tag: 0xb001, type: 4, count: 1, value: 2 },
-      { tag: 0xb002, type: 7, count: 32, value: entries },
+      { tag: 0xb001, type: 4, count: 1, value: 1 + images.length },
+      { tag: 0xb002, type: 7, count: entries.length, value: entries },
     ],
     8,
     8 + 2 + 3 * 12 + 4
@@ -121,20 +125,36 @@ function mpfApp2(previewOffset, previewSize, mainSize) {
 }
 
 // image: optional real JPEG (Buffer) for the main picture; preview: optional
-// real JPEG for the MPF preview.
-function buildJpeg(meta, { image, preview, thumb } = {}) {
+// real JPEG for the MPF preview (null: none); extra: more embedded JPEGs after
+// it, as an iPhone has (its HDR gain map, depth map: see greyJpeg).
+function buildJpeg(meta, { image, preview, thumb, extra = [] } = {}) {
   const app1 = exifApp1({ ...meta, ...(thumb ? { thumb } : {}) });
   const body = image ? image.subarray(2) : FAKE_IMAGE; // drop SOI of the real image
-  const prev = preview || Buffer.concat([Buffer.from([0xff, 0xd8]), FAKE_IMAGE]);
-  // MPF segment size is constant, compute with placeholder then patch.
-  const probe = mpfApp2(0, 0, 0);
+  const prev = preview === null ? null : preview || Buffer.concat([Buffer.from([0xff, 0xd8]), FAKE_IMAGE]);
+  const embedded = [...(prev ? [{ data: prev, type: 0x010001 }] : []), ...extra.map((data) => ({ data, type: 0 }))];
+  // MPF segment size depends only on the number of images: measure, then fill in
+  const probe = mpfApp2(embedded.map(() => ({ offset: 0, size: 0, type: 0 })), 0);
   const mpfTiffStart = 2 + app1.length + 4 + 4; // SOI + APP1 + (FFE2 len) + 'MPF\0'
   const mainSize = 2 + app1.length + probe.length + body.length;
-  const app2 = mpfApp2(mainSize - mpfTiffStart, prev.length, mainSize);
-  return Buffer.concat([Buffer.from([0xff, 0xd8]), app1, app2, body, prev]);
+  let at = mainSize;
+  const images = embedded.map((e) => {
+    const im = { offset: at - mpfTiffStart, size: e.data.length, type: e.type };
+    at += e.data.length;
+    return im;
+  });
+  const app2 = mpfApp2(images, mainSize);
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), app1, app2, body, ...embedded.map((e) => e.data)]);
 }
 
-module.exports = { buildJpeg, exifApp1 };
+// A greyscale JPEG header (one component), padded to `size` bytes: what an
+// iPhone embeds as its HDR gain map. Never decoded by the tests, only told apart.
+function greyJpeg(size = 200000) {
+  const sof = Buffer.from([0xff, 0xc0, 0x00, 0x0b, 0x08, 0x02, 0x00, 0x03, 0x00, 0x01, 0x01, 0x11, 0x00]);
+  const head = Buffer.concat([Buffer.from([0xff, 0xd8]), sof]);
+  return Buffer.concat([head, Buffer.alloc(Math.max(0, size - head.length - 2)), Buffer.from([0xff, 0xd9])]);
+}
+
+module.exports = { buildJpeg, exifApp1, greyJpeg };
 
 // helpers for EXIF values in tests
 const rational = (num, den, signed = false) => {

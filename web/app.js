@@ -3103,6 +3103,24 @@ function tapLook(pos) {
   else selectOnly(pos);
 }
 
+// In the large view by touch: a tap goes back to the three looks, a double
+// tap zooms to actual pixels and back (a tap while zoomed does nothing: you
+// may be panning).
+let soloTapTimer = 0;
+let soloTapAt = -1e9;
+function soloTap(e) {
+  const now = performance.now();
+  if (now - soloTapAt < 350) {
+    clearTimeout(soloTapTimer);
+    soloTapAt = -1e9;
+    toggleZoom(e);
+    return;
+  }
+  soloTapAt = now;
+  clearTimeout(soloTapTimer);
+  soloTapTimer = setTimeout(() => S.solo && !S.solo.zoom && !LV && closeSolo(), 350);
+}
+
 function bindTouch() {
   document.addEventListener('pointerdown', (e) => (lastPointer = e.pointerType), true);
   let t0 = null;
@@ -3411,7 +3429,11 @@ function bindUi() {
     TL.target = 0;
     animateTimeline();
   };
-  $('#solo-frame').onclick = (e) => !LV && toggleZoom(e);
+  $('#solo-frame').onclick = (e) => !LV && (lastPointer === 'touch' ? soloTap(e) : toggleZoom(e));
+  $('#solo-close').onclick = (e) => {
+    e.stopPropagation();
+    closeSolo();
+  };
   $('#solo-frame').onmousemove = (e) => {
     if (!S.solo || !S.solo.zoom) return;
     const r = e.currentTarget.getBoundingClientRect();

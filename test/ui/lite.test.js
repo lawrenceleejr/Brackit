@@ -95,6 +95,16 @@ async function makeCard() {
   fs.writeFileSync(v, Buffer.alloc(2048, 1));
   const vt = new Date(2026, 9, 1, 10, 5, 0);
   fs.utimesSync(v, vt, vt);
+  // iPhone photos: their MPF index lists a greyscale HDR gain map, which must
+  // never be taken for the preview (it showed photos in black and white)
+  const { greyJpeg } = require('../fixture');
+  const iphone = (name, d, opts) => {
+    const f = path.join(d100, name);
+    fs.writeFileSync(f, buildJpeg({ dateTime: '2026:10:02 12:00:00' }, opts));
+    fs.utimesSync(f, new Date(2026, 9, 2, 12), new Date(2026, 9, 2, 12));
+  };
+  iphone('IMG_0001.jpeg', d100, { image: b64(scenes[2].big), preview: null, thumb: b64(scenes[2].thumb), extra: [greyJpeg(300000)] });
+  iphone('IMG_0002.jpeg', d100, { image: b64(scenes[3].big), preview: b64(scenes[3].prev), thumb: b64(scenes[3].thumb), extra: [greyJpeg(400000)] });
   // another folder, another day
   const d101 = path.join(card, 'DCIM', '101_FUJI');
   for (let s = 0; s < 4; s++) {
@@ -193,6 +203,9 @@ test('Lite reads the card exactly as the desktop app does', async () => {
   assert.deepEqual(byRel(lib), byRel(refLib), 'every photo field');
   assert.ok(Object.values(lib.photos).some((p) => p.filmSim === 'Acros'), 'monochrome sims read');
   assert.ok(Object.values(lib.photos).some((p) => p.rawName === 'DSCF0001.RAF'), 'RAW matched');
+  const ip = (n) => Object.values(lib.photos).find((p) => p.name === n);
+  assert.equal(ip('IMG_0001.jpeg').hasPreview, false, 'a gain map is not a preview');
+  assert.equal(ip('IMG_0002.jpeg').hasPreview, true, 'the colour preview, not the bigger gain map');
 
   // settings, recipe and every tag: same from the browser as from the desktop
   const refIds = Object.fromEntries(Object.values(refLib.photos).map((p) => [p.rel, p.id]));
@@ -326,6 +339,30 @@ test('Lite on a phone: picks files, stacks the looks, tap to pick, swipe to flip
   assert.equal(await page.evaluate(() => S.idx), 1, 'swipe left = next');
   await swipe(80, 300);
   assert.equal(await page.evaluate(() => S.idx), 0, 'swipe right = back');
+  // double-tap a look: large view; there double-tap zooms and back, a tap
+  // returns to the looks, and so does the ×
+  const dbl = async (sel) => {
+    await page.tap(sel);
+    await page.waitForTimeout(60);
+    await page.tap(sel);
+  };
+  await dbl('.look:nth-child(1) .frame');
+  await page.waitForSelector('#solo:not([hidden])');
+  await page.waitForTimeout(400);
+  await dbl('#solo-frame');
+  await page.waitForFunction(() => S.solo && S.solo.zoom);
+  await page.waitForTimeout(400);
+  await dbl('#solo-frame');
+  await page.waitForFunction(() => S.solo && !S.solo.zoom);
+  await page.waitForTimeout(400);
+  assert.ok(await page.evaluate(() => !!S.solo), 'still in the large view after zooming back');
+  await page.tap('#solo-frame');
+  await page.waitForFunction(() => !S.solo, null, { timeout: 3000 });
+  await dbl('.look:nth-child(1) .frame');
+  await page.waitForSelector('#solo:not([hidden])');
+  await page.tap('#solo-close');
+  await page.waitForFunction(() => !S.solo, null, { timeout: 3000 });
+  await page.waitForTimeout(400);
   await shot(page, 'lite-phone');
   await page.tap('#staged-btn');
   await page.waitForSelector('#staged:not([hidden])');

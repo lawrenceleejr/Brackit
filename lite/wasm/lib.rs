@@ -59,6 +59,7 @@ pub unsafe extern "C" fn meta(ptr: *const u8, len: usize) -> u64 {
             "height": opt(m.height.or(m.frame_height)),
             "filmSim": opt(m.film_sim),
             "preview": range(m.preview),
+            "previews": m.previews.iter().map(|&(s, l)| json!([s, l])).collect::<Vec<_>>(),
             "thumb": range(m.thumb),
             "rating": opt(m.rating),
         })
@@ -99,4 +100,17 @@ pub unsafe extern "C" fn graft(head: *const u8, head_len: usize, jpg: *const u8,
 #[no_mangle]
 pub extern "C" fn orientation(o: u32) -> u64 {
     output(jpeg::orientation_segment(o as u16))
+}
+
+/// Whether the JPEG starting in these bytes is in colour: 1 yes, 0 no (greyscale,
+/// e.g. an iPhone's HDR gain map), 2 can't tell yet (send more bytes).
+/// # Safety
+/// `ptr` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn colour(ptr: *const u8, len: usize) -> u32 {
+    match jpeg::jpeg_colour(input(ptr, len)) {
+        Some(true) => 1,
+        Some(false) => 0,
+        None => 2,
+    }
 }

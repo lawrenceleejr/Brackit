@@ -597,3 +597,11 @@ body.touch .lv-h { top: 5px; width: 22px; height: 19px; margin-left: -11px; }
 .lv-actions .btn { padding: 5px 10px; }
 #solo.levels-on #solo-caption .tool { opacity: .35; pointer-events: none; }
 @media (max-width: 700px) { #levels { width: calc(100vw - 20px); right: 10px; bottom: 44px; } }
+
+/* touch: no browser double-tap zoom (double tap is ours); a way out of the large view */
+body.touch { touch-action: manipulation; }
+#solo-close {
+  position: absolute; top: 8px; right: 10px; z-index: 7; width: 40px; height: 40px;
+  font-size: 26px; line-height: 38px; color: var(--ink); border-radius: 20px;
+  background: rgba(13, 13, 12, .6);
+}
