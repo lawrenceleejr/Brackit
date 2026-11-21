@@ -262,10 +262,31 @@
     return summary();
   }
 
+  // The largest embedded image that is a colour picture (an iPhone photo's
+  // are its greyscale HDR gain map and depth map, not previews).
+  async function pickPreview(file, previews) {
+    for (const [s, n] of previews || []) {
+      for (const k of [4096, 65536, 262144]) {
+        const head = await readBytes(file.slice(s, s + Math.min(k, n)));
+        const p = put(head);
+        let c;
+        try {
+          c = wasm.colour(p, head.length);
+        } finally {
+          wasm.dealloc(p, head.length);
+        }
+        if (c === 1) return [s, n];
+        if (c === 0 || head.length < Math.min(k, n) || k >= n) break;
+      }
+    }
+    return null;
+  }
+
   async function readOne(f) {
     const video = isVideo(f.name);
     const m = video ? { orientation: 1, dateTime: exifDate(f.mtime) } : await readMeta(f.file);
     if (!m) return null;
+    if (!video) m.preview = await pickPreview(f.file, m.previews);
     return {
       id: stableId(f.rel, f.size, f.mtime),
       name: f.name,

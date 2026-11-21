@@ -19,6 +19,10 @@ pub struct Meta {
     pub film_sim: Option<String>,
     /// Byte range of the embedded MPF preview JPEG (Fuji: ~1920px).
     pub preview: Option<(u64, u64)>,
+    /// Every image the MPF index lists after the main one, largest first. Not
+    /// all are previews: an iPhone photo's are its HDR gain map and depth map,
+    /// greyscale; `preview` is the largest one in colour (see `pick_preview`).
+    pub previews: Vec<(u64, u64)>,
     /// Byte range of the EXIF IFD1 thumbnail JPEG (~160px).
     pub thumb: Option<(u64, u64)>,
     /// In-camera rating (0–5), if set on the camera.
@@ -221,7 +225,7 @@ fn parse_mpf(buf: &[u8], base: usize, out: &mut Meta) {
     if !t.ok(e.off, e.size) {
         return;
     }
-    let mut best: Option<(u64, u64)> = None;
+    let mut all: Vec<(u64, u64)> = Vec::new();
     for i in 1..e.size / 16 {
         let o = e.off + i * 16;
         let size = t.u32(o + 4) as u64;
@@ -229,13 +233,66 @@ fn parse_mpf(buf: &[u8], base: usize, out: &mut Meta) {
         if size == 0 || offset == 0 {
             continue;
         }
-        if best.map_or(true, |(_, l)| size > l) {
-            best = Some((base as u64 + offset, size)); // offsets are relative to the MPF TIFF header
+        all.push((base as u64 + offset, size)); // offsets are relative to the MPF TIFF header
+    }
+    all.sort_by(|a, b| b.1.cmp(&a.1));
+    out.preview = all.first().copied();
+    out.previews = all;
+}
+
+/// Whether a JPEG (its first bytes) is in colour: its frame header lists three
+/// or more components. Some(false) for a greyscale one (an iPhone's HDR gain
+/// map, a depth map); Some(true) also when there's no frame header before the
+/// image data (can't tell: keep it); None if `buf` ends before either.
+pub fn jpeg_colour(buf: &[u8]) -> Option<bool> {
+    if buf.len() < 2 || buf[0] != 0xff || buf[1] != 0xd8 {
+        return Some(false);
+    }
+    let mut p = 2;
+    loop {
+        if p + 4 > buf.len() {
+            return None;
         }
+        if buf[p] != 0xff {
+            return Some(false);
+        }
+        let marker = buf[p + 1];
+        if marker == 0xff {
+            p += 1;
+            continue;
+        }
+        if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {
+            p += 2;
+            continue;
+        }
+        if marker == 0xda || marker == 0xd9 {
+            return Some(true);
+        }
+        let len = u16::from_be_bytes([buf[p + 2], buf[p + 3]]) as usize;
+        if (0xc0..=0xcf).contains(&marker) && marker != 0xc4 && marker != 0xc8 && marker != 0xcc {
+            return if p + 10 > buf.len() { None } else { Some(buf[p + 9] >= 3) };
+        }
+        p += 2 + len;
     }
-    if best.is_some() {
-        out.preview = best;
-    }
+}
+
+/// The largest embedded image that is a colour picture, reading only the
+/// start of each (usually one, a few kilobytes).
+fn pick_preview(f: &mut File, previews: &[(u64, u64)]) -> Option<(u64, u64)> {
+    previews.iter().copied().find(|&(start, len)| {
+        for n in [4 * 1024, 64 * 1024, 256 * 1024] {
+            let mut buf = Vec::new();
+            if f.seek(SeekFrom::Start(start)).is_err() || f.by_ref().take(n.min(len)).read_to_end(&mut buf).is_err() {
+                return false;
+            }
+            match jpeg_colour(&buf) {
+                Some(c) => return c,
+                None if (buf.len() as u64) < n.min(len) || n >= len => return false,
+                None => {}
+            }
+        }
+        false
+    })
 }
 
 /// Read a JPEG's header metadata with as little I/O as possible: hop from
@@ -290,8 +347,8 @@ pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
                         parse_exif(&seg, 10, &mut m);
                     }
                     m.thumb = m.thumb.map(|(s, l)| (s + pos, l));
-                    let (preview, frame_w, frame_h) = (out.preview, out.frame_width, out.frame_height);
-                    out = Meta { preview, frame_width: frame_w, frame_height: frame_h, ..m };
+                    let (previews, frame_w, frame_h) = (std::mem::take(&mut out.previews), out.frame_width, out.frame_height);
+                    out = Meta { previews, frame_width: frame_w, frame_height: frame_h, ..m };
                 }
             }
             0xe2 => {
@@ -299,7 +356,7 @@ pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
                 if seg.len() >= 8 && &seg[4..8] == b"MPF\0" {
                     let mut m = Meta::default();
                     parse_mpf(&seg, 8, &mut m);
-                    out.preview = m.preview.map(|(s, l)| (s + pos, l));
+                    out.previews = m.previews.iter().map(|&(s, l)| (s + pos, l)).collect();
                 }
             }
             0xc0..=0xc2 => {
@@ -313,6 +370,7 @@ pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
         }
         pos += seg_len;
     }
+    out.preview = pick_preview(&mut f, &out.previews);
     Ok(out)
 }
 
@@ -371,8 +429,8 @@ pub fn meta_from_buf(buf: &[u8]) -> (Meta, usize) {
                     let mut m = Meta { orientation: 1, ..Default::default() };
                     parse_exif(seg, 10, &mut m);
                     m.thumb = m.thumb.map(|(s, l)| (s + pos as u64, l));
-                    let (preview, frame_w, frame_h) = (out.preview, out.frame_width, out.frame_height);
-                    out = Meta { preview, frame_width: frame_w, frame_height: frame_h, ..m };
+                    let (preview, previews, frame_w, frame_h) = (out.preview, std::mem::take(&mut out.previews), out.frame_width, out.frame_height);
+                    out = Meta { preview, previews, frame_width: frame_w, frame_height: frame_h, ..m };
                 }
             }
             0xe2 => {
@@ -380,7 +438,10 @@ pub fn meta_from_buf(buf: &[u8]) -> (Meta, usize) {
                 if seg.len() >= 8 && &seg[4..8] == b"MPF\0" {
                     let mut m = Meta::default();
                     parse_mpf(seg, 8, &mut m);
-                    out.preview = m.preview.map(|(s, l)| (s + pos as u64, l));
+                    // (which of them is a colour preview is checked by the caller,
+                    // which can read them: see `jpeg_colour`)
+                    out.previews = m.previews.iter().map(|&(s, l)| (s + pos as u64, l)).collect();
+                    out.preview = out.previews.first().copied();
                 }
             }
             0xc0..=0xc2 => {

@@ -84,5 +84,12 @@ Anything slower feels sluggish.
   (`levelsGL`: the table as a 256×1 texture), updated at most once a frame
   (`scheduleLevels`); the SVG filter (`showLevels`, `#lv-live`) is only the
   fallback without WebGL. `bakeLevels` applies them on export.
+- **Pictures go on screen decoded and drawn at once:** images load with
+  `decoding="async"`, but anything put in a frame passes `onScreen()` (or
+  `showLevels`, which calls it) to switch to "sync" in WebKit. Otherwise
+  WebKit (Safari, iPhone, the Mac app) paints it later, blank or half-done
+  (grey on iPhone), and copies inherit the setting. Only WebKit: in Chromium
+  "sync" makes the paint wait and blows the flip budget.
+  `test/ui/webkit.test.js` checks.
 - Every tool needs a key and an entry in the Menu (`MENU` in `web/app.js`)
   and in the Mac menu bar (`src-tauri/src/gui.rs`).

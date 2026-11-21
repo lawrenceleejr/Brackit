@@ -51,7 +51,7 @@ jobs:
             lite/wasm
           key: cli
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run build:cli
       - run: npm run test:ui
 

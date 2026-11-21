@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { parseHeader } = require('./jpeg-reader');
-const { buildJpeg, rational, slongs } = require('./fixture');
+const { buildJpeg, greyJpeg, rational, slongs } = require('./fixture');
 
 const BIN = process.env.BRACKIT_BIN || path.join(__dirname, '..', 'src-tauri', 'target', 'release', process.platform === 'win32' ? 'brackit.exe' : 'brackit');
 
@@ -474,4 +474,27 @@ test('export: same name and size but a different file is not "already there"', a
   const names = fs.readdirSync(dest).sort();
   assert.ok(names.some((n) => /-1\./.test(n)), names.join(','));
   assert.ok(!names.some((n) => n.endsWith('.partial')), 'no temporary files left');
+});
+
+// An iPhone photo's MPF index lists its HDR gain map (greyscale, often larger
+// than any preview), not a preview: the gain map must never stand in for the
+// photo, which then showed in black and white.
+test('embedded greyscale images (an iPhone HDR gain map) are never the preview', async () => {
+  const c5 = path.join(tmp, 'card5', 'DCIM');
+  fs.mkdirSync(c5, { recursive: true });
+  const colour = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x02, 0x00, 0x03, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]), Buffer.alloc(3000), Buffer.from([0xff, 0xd9])]);
+  const shot = { dateTime: '2026:11:17 14:50:48' };
+  // a camera preview and a larger gain map: the preview wins
+  fs.writeFileSync(path.join(c5, 'IMG_0001.jpeg'), buildJpeg(shot, { preview: colour, extra: [greyJpeg(200000)] }));
+  // only a gain map (an iPhone photo): no preview, the photo itself is shown
+  fs.writeFileSync(path.join(c5, 'IMG_0002.jpeg'), buildJpeg({ ...shot, dateTime: '2026:11:17 14:51:00' }, { preview: null, extra: [greyJpeg(150000), greyJpeg(40000)] }));
+  const l = (await api('POST', '/api/open', { path: path.join(tmp, 'card5') })).data;
+  const by = (n) => Object.values(l.photos).find((p) => p.name === n);
+  assert.equal(by('IMG_0001.jpeg').hasPreview, true);
+  const r = await api('GET', `/api/img/${by('IMG_0001.jpeg').id}`);
+  assert.equal(r.data.length, colour.length, 'the colour preview, not the bigger gain map');
+  assert.equal(by('IMG_0002.jpeg').hasPreview, false);
+  const own = await api('GET', `/api/img/${by('IMG_0002.jpeg').id}`);
+  assert.deepEqual(own.data, fs.readFileSync(path.join(c5, 'IMG_0002.jpeg')), 'no colour preview: the photo itself');
+  await api('POST', '/api/open', { path: card }); // back to the main card for the tests after
 });

@@ -126,7 +126,7 @@ test('the panel: drag and keys change the photo live; Done keeps, Cancel restore
   await page.mouse.down();
   await page.mouse.move(track.x + (greyX - 0.08) * track.width, track.y + 10, { steps: 5 });
   await page.mouse.up();
-  await page.waitForTimeout(50);
+  await page.waitForFunction(() => LV.g > 1.2, null, { timeout: 5000 }).catch(() => {});
   const g = await page.evaluate(() => LV.g);
   assert.ok(g > 1.2 && g < 2.5, `grey ${g}`);
   // pressing on the histogram itself, near a point, grabs that point
@@ -136,7 +136,7 @@ test('the panel: drag and keys change the photo live; Done keeps, Cancel restore
   await page.mouse.down();
   await page.mouse.move(hist.x + bx * hist.width - 6, hist.y + hist.height / 2, { steps: 3 });
   await page.mouse.up();
-  await page.waitForTimeout(50);
+  await page.waitForFunction(() => LV.sel === 'b' && LV.b < 40, null, { timeout: 5000 }).catch(() => {});
   assert.equal(await page.evaluate(() => LV.sel), 'b', 'the black point, from a press on the histogram');
   const b2 = await page.evaluate(() => LV.b);
   assert.ok(b2 < 40 && b2 > 25, `black ${b2}`);

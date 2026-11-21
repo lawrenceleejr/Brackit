@@ -882,7 +882,6 @@ function makeDisplayCopy() {
     const key = dispKey(set, id);
     const edit = cropOf(photo(id));
     const lv = levelsOf(photo(id));
-    if (lv) levelsFilter(lv); // (the on-screen filter, ready before it's needed)
     if (edit || lv) {
       // cropped and/or levelled: drawn once, at display size, in this idle
       // moment, so the set shows without any filter at all
@@ -1049,7 +1048,24 @@ function levelsCss(p) {
   const lv = levelsOf(p);
   return lv ? levelsFilter(lv) : '';
 }
+/* Pictures go on screen already decoded: images are loaded with
+   decoding="async" (off the main thread), but in WebKit (Safari, iPhone, the
+   Mac app) an element so marked is painted later on its own, blank or
+   half-done (grey on iPhone) at first, and a copy of an element inherits the
+   setting. There, pictures put on screen are switched to "sync"; they're
+   decoded already or tiny. */
+// (Chromium paints such an element at once anyway, and "sync" there makes the
+// paint wait for decoding instead: only WebKit gets it.)
+const SYNC_DECODE = /Apple/.test(navigator.vendor || '');
+function onScreen(node) {
+  if (!node || !SYNC_DECODE) return node;
+  if (node.tagName === 'IMG') node.decoding = 'sync';
+  else if (node.querySelectorAll) for (const im of node.querySelectorAll('img')) im.decoding = 'sync';
+  return node;
+}
+
 function showLevels(node, p) {
+  onScreen(node);
   // a display copy made in idle time has its levels in its pixels already
   if (node && node.style) node.style.filter = node.dataset && node.dataset.baked ? '' : levelsCss(p);
   return node;
@@ -1167,7 +1183,7 @@ function placeholderImg(timg, p, frame) {
   const a = photoAspect(p);
   const maxH = S.imgMax || frame.clientHeight || 600;
   const w = Math.max(1, Math.min(frame.clientWidth || 600, maxH * a));
-  const im = timg.cloneNode();
+  const im = onScreen(timg.cloneNode());
   im.className = 'lowres ready';
   im.style.width = `${Math.round(w)}px`;
   im.style.height = `${Math.round(w / a)}px`;
@@ -1184,7 +1200,7 @@ function placeholderImg(timg, p, frame) {
 function cropView(src, p, edit, boxW, maxH) {
   const W = srcW(src) || 1;
   const H = srcH(src) || 1;
-  const img = src.cloneNode();
+  const img = onScreen(src.cloneNode());
   const a = (W * edit.crop.w) / (H * edit.crop.h);
   const w = Math.max(1, Math.min(boxW || 600, (maxH || 600) * a));
   const h = w / a;
@@ -1763,7 +1779,7 @@ function peekAt(e) {
   }
   const put = (img) => {
     if (peekIdx !== i || !img || !img.naturalWidth) return;
-    box.replaceChildren(img.cloneNode());
+    box.replaceChildren(onScreen(img.cloneNode()));
   };
   const ready = thumbReady(shown.id);
   if (ready) put(ready);
@@ -1801,7 +1817,7 @@ function openOverview() {
         const tile = en.target;
         thumbImage(tile.dataset.id).then((img) => {
           if (!img || !img.naturalWidth || !tile.isConnected) return;
-          const c = img.cloneNode();
+          const c = onScreen(img.cloneNode());
           c.alt = '';
           tile.prepend(c);
         });
@@ -2018,7 +2034,7 @@ function renderSolo() {
       else {
         const a = photoAspect(p);
         const w = Math.min(frame.clientWidth, frame.clientHeight * a);
-        node = timg.cloneNode();
+        node = onScreen(timg.cloneNode());
         node.style.width = `${Math.round(w)}px`;
         node.style.height = `${Math.round(w / a)}px`;
         node.style.objectFit = 'cover';
@@ -3087,6 +3103,24 @@ function tapLook(pos) {
   else selectOnly(pos);
 }
 
+// In the large view by touch: a tap goes back to the three looks, a double
+// tap zooms to actual pixels and back (a tap while zoomed does nothing: you
+// may be panning).
+let soloTapTimer = 0;
+let soloTapAt = -1e9;
+function soloTap(e) {
+  const now = performance.now();
+  if (now - soloTapAt < 350) {
+    clearTimeout(soloTapTimer);
+    soloTapAt = -1e9;
+    toggleZoom(e);
+    return;
+  }
+  soloTapAt = now;
+  clearTimeout(soloTapTimer);
+  soloTapTimer = setTimeout(() => S.solo && !S.solo.zoom && !LV && closeSolo(), 350);
+}
+
 function bindTouch() {
   document.addEventListener('pointerdown', (e) => (lastPointer = e.pointerType), true);
   let t0 = null;
@@ -3395,7 +3429,11 @@ function bindUi() {
     TL.target = 0;
     animateTimeline();
   };
-  $('#solo-frame').onclick = (e) => !LV && toggleZoom(e);
+  $('#solo-frame').onclick = (e) => !LV && (lastPointer === 'touch' ? soloTap(e) : toggleZoom(e));
+  $('#solo-close').onclick = (e) => {
+    e.stopPropagation();
+    closeSolo();
+  };
   $('#solo-frame').onmousemove = (e) => {
     if (!S.solo || !S.solo.zoom) return;
     const r = e.currentTarget.getBoundingClientRect();
