@@ -574,16 +574,18 @@ body.touch .no-touch { display: none !important; }
 }
 .levels-title { color: var(--muted); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
 #levels-hist { display: block; border-bottom: 1px solid var(--faint); }
-#levels-track { position: relative; height: 14px; cursor: ew-resize; touch-action: none; }
-.lv-h {
-  position: absolute; top: 2px; width: 0; height: 0; margin-left: -5px;
-  border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 9px solid;
-}
-.lv-h::after { content: ""; position: absolute; left: -10px; top: -4px; width: 20px; height: 18px; } /* easier to grab */
-.lv-b { border-bottom-color: #000; filter: drop-shadow(0 0 0.6px var(--muted)); }
-.lv-g { border-bottom-color: #7d7a73; }
-.lv-w { border-bottom-color: var(--ink); }
-.lv-h.sel { filter: drop-shadow(0 0 0.8px var(--ink)) drop-shadow(0 1px 0 var(--ink)); }
+#levels-area { cursor: ew-resize; touch-action: none; padding-top: 4px; }
+#levels-track { position: relative; height: 22px; }
+/* the points: outlined triangles, so black shows on the dark panel too */
+.lv-h { position: absolute; top: 3px; width: 16px; height: 14px; margin-left: -8px; overflow: visible; pointer-events: none; }
+.lv-h path { stroke: var(--muted); stroke-width: 1.2; stroke-linejoin: round; }
+.lv-b path { fill: #000; }
+.lv-g path { fill: #7d7a73; }
+.lv-w path { fill: #f4f1ea; }
+.lv-h.sel path { stroke: var(--ink); stroke-width: 1.8; }
+body.touch #levels-track { height: 34px; }
+body.touch .lv-h { top: 5px; width: 22px; height: 19px; margin-left: -11px; }
+.levels-gl { display: block; }
 .lv-nums { position: relative; height: 16px; font-size: 11px; color: var(--muted); }
 .lv-nums span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .lv-nums #lv-b { transform: translateX(-20%); }

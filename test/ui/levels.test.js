@@ -106,8 +106,8 @@ test('the panel: drag and keys change the photo live; Done keeps, Cancel restore
   await page.keyboard.press('v');
   await page.waitForSelector('#levels:not([hidden])');
   assert.equal(await page.evaluate(() => S.solo && S.solo.pos), 1, 'opens on the picked look, in the large view');
-  await page.waitForFunction(() => LV && LV.sample);
-  assert.match(await page.evaluate(() => $('#solo-frame').firstElementChild.style.filter), /lv-live/, 'live filter on the photo');
+  await page.waitForFunction(() => LV && LV.sample && LV.gl);
+  assert.ok(await page.evaluate(() => $('#solo-frame').firstElementChild === LV.gl.canvas), 'the GPU preview is on screen');
 
   // keys: Tab to white, then black; move them
   assert.equal(await page.evaluate(() => LV.sel), 'g');
@@ -122,22 +122,45 @@ test('the panel: drag and keys change the photo live; Done keeps, Cancel restore
   // drag the grey point left of middle: brighter (grey above 1)
   const track = await page.locator('#levels-track').boundingBox();
   const greyX = await page.evaluate(() => greyAt(LV) / 255);
-  await page.mouse.move(track.x + greyX * track.width, track.y + 7);
+  await page.mouse.move(track.x + greyX * track.width, track.y + 10);
   await page.mouse.down();
-  await page.mouse.move(track.x + (greyX - 0.08) * track.width, track.y + 7, { steps: 5 });
+  await page.mouse.move(track.x + (greyX - 0.08) * track.width, track.y + 10, { steps: 5 });
   await page.mouse.up();
+  await page.waitForTimeout(50);
   const g = await page.evaluate(() => LV.g);
   assert.ok(g > 1.2 && g < 2.5, `grey ${g}`);
-  // the live table follows
-  const table = await page.evaluate(() => document.querySelector('#lv-live feFuncG').getAttribute('tableValues').split(' ').map(Number));
-  assert.equal(table.length, 256);
-  assert.equal(table[40], 0, 'black point maps to black');
-  assert.equal(table[235], 1, 'white point maps to white');
+  // pressing on the histogram itself, near a point, grabs that point
+  const hist = await page.locator('#levels-hist').boundingBox();
+  const bx = await page.evaluate(() => LV.b / 255);
+  await page.mouse.move(hist.x + bx * hist.width + 4, hist.y + hist.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hist.x + bx * hist.width - 6, hist.y + hist.height / 2, { steps: 3 });
+  await page.mouse.up();
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => LV.sel), 'b', 'the black point, from a press on the histogram');
+  const b2 = await page.evaluate(() => LV.b);
+  assert.ok(b2 < 40 && b2 > 25, `black ${b2}`);
+  await page.evaluate(() => {
+    LV.b = 40;
+    updateLevels();
+  });
+  // what the GPU shows is the export table, pixel for pixel (±1)
+  const worst = await page.evaluate(() => {
+    const src = renderEdited(imageCache.get(previewUrl(LV.id)).img, IDENTITY, 2048);
+    const want = bakeLevels(src, LV).getContext('2d').getImageData(0, 0, src.width, src.height).data;
+    const c = document.createElement('canvas');
+    c.width = src.width;
+    c.height = src.height;
+    c.getContext('2d').drawImage(LV.gl.canvas, 0, 0);
+    const got = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let w = 0;
+    for (let i = 0; i < got.length; i += 4 * 97) for (let k = 0; k < 3; k++) w = Math.max(w, Math.abs(got[i + k] - want[i + k]));
+    return w;
+  });
+  assert.ok(worst <= 1, `GPU preview differs from the export by up to ${worst} levels`);
   assert.match(await page.textContent('#lv-clip'), /clipped: .*black.*white/);
 
-  // Cancel: nothing kept, the photo back as it was (with the full-resolution
-  // picture already on screen, which is the hard case)
-  await page.waitForFunction(() => $('#solo-frame').dataset.level === 'full');
+  // Cancel: nothing kept, the photo back as it was
   await page.keyboard.press('Escape');
   assert.equal(await page.isHidden('#levels'), true);
   assert.equal(await lvOf(page, 1), null);
@@ -148,11 +171,15 @@ test('the panel: drag and keys change the photo live; Done keeps, Cancel restore
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight');
-  await page.waitForFunction(() => $('#solo-frame').dataset.level === 'full');
+  await page.waitForFunction(() => LV && LV.gl);
   await page.keyboard.press('Enter');
   assert.deepEqual(await lvOf(page, 1), { b: 40, g: 1, w: 255 });
   assert.equal(await lvOf(page, 0), null, 'levels are per look');
-  assert.match(await page.evaluate(() => $('#solo-frame').firstElementChild.style.filter), /url\("?#lv-40_255_1p00"?\)/);
+  // the GPU copy stands in (already right) until the sharp levelled copy is made
+  await page.waitForFunction(() => {
+    const n = $('#solo-frame').firstElementChild;
+    return n && n.dataset.baked === '1' && !n.classList.contains('levels-gl');
+  });
   assert.match(await page.textContent('#solo-caption'), /levels/);
   await page.keyboard.press(' '); // back to the 3-up: the look shows its levels there too
   await page.waitForTimeout(300);

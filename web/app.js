@@ -1949,6 +1949,7 @@ function renderSolo() {
   }
   const show = (node, level) => {
     if (token !== soloToken) return;
+    if (LV && LV.gl && LV.id === id) return; // adjusting levels: the GPU copy stays
     frame.dataset.id = id;
     frame.dataset.photo = id;
     frame.dataset.src = 'card';
@@ -2751,7 +2752,7 @@ function openLevels(pos) {
   }
   const p = photo(set.photos[S.solo.pos]);
   const cur = levelsOf(p) || LV_NONE;
-  LV = { key: p.key, id: p.id, b: cur.b, g: cur.g, w: cur.w, sel: 'g', sample: null, base: null };
+  LV = { key: p.key, id: p.id, b: cur.b, g: cur.g, w: cur.w, sel: 'g', sample: null, base: null, gl: null };
   if (!lvFilters.has('live')) {
     makeLevelsFilter('lv-live');
     lvFilters.set('live', 'lv-live');
@@ -2761,47 +2762,53 @@ function openLevels(pos) {
   $('#levels').hidden = false;
   $('#levels-title').textContent = `Levels · ${p.filmSim || p.name}`;
   $('#solo').classList.add('levels-on');
-  updateLevels();
-  renderSolo(); // the picture without its kept levels, under the live filter
-  levelsSample(p).then((sample) => {
-    if (!LV || LV.id !== p.id || !sample) return;
-    LV.sample = sample;
-    LV.base = lumaHist(sample, null);
-    drawLevels();
+  drawLevels();
+  renderSolo(); // the picture without its kept levels (under the live filter until the GPU copy is up)
+  const lv = LV;
+  getImage(previewUrl(p.id), 0).promise.then((img) => {
+    if (LV !== lv || !img || !img.naturalWidth) return;
+    // the preview as cropped, at most 2048 px: what you adjust, on the GPU
+    const src = renderEdited(img, cropOf(p) || IDENTITY, 2048);
+    LV.sample = sampleOf(src);
+    LV.base = LV.sample && lumaHist(LV.sample, null);
+    LV.gl = levelsGL(src);
+    if (LV.gl) {
+      LV.gl.draw(LV);
+      $('#solo-frame').replaceChildren(LV.gl.canvas);
+      $('#solo-frame').dataset.level = 'levels';
+    }
+    updateLevels();
   });
 }
 
 function closeLevels(commit) {
   if (!LV) return;
-  const { key, id } = LV;
+  const { key, gl } = LV;
   const lv = { b: LV.b, g: +LV.g.toFixed(2), w: LV.w };
+  // kept: the GPU copy (already showing them, sharp) stays up until the
+  // sharp levelled copy replaces it; cancelled: it's replaced at once
+  if (gl && commit) $('#solo-frame').dataset.level = 'preview';
   LV = null;
+  clearTimeout(lvClipTimer);
   $('#levels').hidden = true;
   $('#solo').classList.remove('levels-on');
   if (commit) {
     setEdit(key, { levels: lvIdentity(lv) ? undefined : lv });
     saveEdits();
-  }
-  // the picture on screen: the kept levels (or none) right away
-  const node = S.solo && $('#solo-frame').firstElementChild;
-  if (node && S.lib.photos[id]) {
-    showLevels(node, S.lib.photos[id]);
-    if (TOOLS.clip) applyOverlays($('#solo'), node, id, 'card', { zoomed: S.solo.zoom });
-  }
-  if (commit) {
-    renderSoloCaption(); // "levels" next to the file name
     S.stageStale = true; // the 3-up shows them when the large view closes
     if (!$('#staged').hidden) renderStaged();
   }
+  if (S.solo) {
+    const node = $('#solo-frame').firstElementChild;
+    if (node && !gl) showLevels(node, S.lib.photos[S.view[S.idx].photos[S.solo.pos]]);
+    renderSolo(); // the kept look, made as usual (sharp copy, clipping, caption)
+  }
+  if (gl) setTimeout(() => gl.dispose(), 2000);
 }
 
-// A small copy of the preview (as cropped) to count from.
-async function levelsSample(p) {
-  const img = await getImage(previewUrl(p.id), 0).promise;
-  if (!img || !img.naturalWidth) return null;
-  const crop = cropOf(p);
-  const src = crop ? renderEdited(img, crop, 360) : img;
-  const w = Math.min(360, srcW(src));
+// A small copy (200 px) to count the histogram from: cheap to recount per frame.
+function sampleOf(src) {
+  const w = Math.min(200, srcW(src));
   const h = Math.max(1, Math.round((w * srcH(src)) / srcW(src)));
   const c = document.createElement('canvas');
   c.width = w;
@@ -2813,6 +2820,80 @@ async function levelsSample(p) {
   } catch {
     return null;
   }
+}
+
+/* The live preview while dragging: the picture as a WebGL texture and the
+   levels table as a 256×1 texture; each change uploads 256 bytes and draws
+   once on the GPU, so dragging stays smooth on phones and on machines where
+   a CSS filter over a big picture would run on the CPU. Null without WebGL
+   (then the SVG filter stands in). */
+function levelsGL(src) {
+  let gl;
+  const c = document.createElement('canvas');
+  c.width = srcW(src);
+  c.height = srcH(src);
+  try {
+    gl = c.getContext('webgl', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false });
+  } catch {
+    gl = null;
+  }
+  if (!gl || Math.max(c.width, c.height) > gl.getParameter(gl.MAX_TEXTURE_SIZE)) return null;
+  const sh = (type, code) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, code);
+    gl.compileShader(s);
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 uv; void main() { uv = vec2(p.x + 1.0, 1.0 - p.y) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }'));
+  gl.attachShader(
+    prog,
+    sh(
+      gl.FRAGMENT_SHADER,
+      `precision mediump float; varying vec2 uv; uniform sampler2D img; uniform sampler2D lut;
+       float L(float v) { return texture2D(lut, vec2((v * 255.0 + 0.5) / 256.0, 0.5)).r; }
+       void main() { vec4 c = texture2D(img, uv); gl_FragColor = vec4(L(c.r), L(c.g), L(c.b), 1.0); }`
+    )
+  );
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const texture = (unit, filter) => {
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  };
+  texture(0, gl.LINEAR);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+  texture(1, gl.NEAREST);
+  gl.uniform1i(gl.getUniformLocation(prog, 'img'), 0);
+  gl.uniform1i(gl.getUniformLocation(prog, 'lut'), 1);
+  gl.viewport(0, 0, c.width, c.height);
+  c.className = 'ready levels-gl';
+  c.dataset.baked = '1'; // its pixels already carry the levels
+  return {
+    canvas: c,
+    draw(lv) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 256, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, new Uint8Array(levelsLut(lv)));
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    },
+    dispose() {
+      const ext = gl.getExtension('WEBGL_lose_context');
+      if (ext) ext.loseContext();
+    },
+  };
 }
 
 // 256-bin luminance histogram of the sample, through a table if given.
@@ -2844,21 +2925,34 @@ function setLevelsHandle(h, v) {
     const t = clamp((v - LV.b) / (LV.w - LV.b), 0.01, 0.99);
     LV.g = clamp(Math.round((Math.log(t) / Math.log(0.5)) * 100) / 100, 0.1, 9.99);
   }
-  updateLevels();
+  scheduleLevels();
 }
 
-let lvClipFrame = 0;
+// However many pointer moves arrive, the picture and panel update once a frame.
+let lvFrame = 0;
+function scheduleLevels() {
+  if (lvFrame) return;
+  lvFrame = requestAnimationFrame(() => {
+    lvFrame = 0;
+    if (LV) updateLevels();
+  });
+}
+
+let lvClipTimer = 0;
 function updateLevels() {
-  const f = document.getElementById('lv-live');
-  if (f) setLevelsTable(f, LV);
+  if (LV.gl) LV.gl.draw(LV);
+  else {
+    const f = document.getElementById('lv-live');
+    if (f) setLevelsTable(f, LV);
+  }
   drawLevels();
-  // clipping warnings follow the handles too (once a frame at most)
-  if (TOOLS.clip && S.solo && !lvClipFrame) {
-    lvClipFrame = requestAnimationFrame(() => {
-      lvClipFrame = 0;
+  // clipping warnings follow once you pause (recounting them is the slow part)
+  if (TOOLS.clip && S.solo) {
+    clearTimeout(lvClipTimer);
+    lvClipTimer = setTimeout(() => {
       const node = $('#solo-frame').firstElementChild;
-      if (LV && S.solo && node) applyOverlays($('#solo'), node, LV.id, 'card', { zoomed: S.solo.zoom });
-    });
+      if (LV && S.solo && node) applyOverlays($('#solo'), node, LV.id, 'card', { zoomed: false });
+    }, 120);
   }
 }
 
@@ -2867,14 +2961,17 @@ function updateLevels() {
 function drawLevels() {
   if (!LV) return;
   const c = $('#levels-hist');
-  const W = 300;
+  const W = Math.max(120, c.parentElement.clientWidth || 300);
   const H = 72;
-  c.width = Math.round(W * dpr());
-  c.height = Math.round(H * dpr());
-  c.style.width = W + 'px';
-  c.style.height = H + 'px';
+  if (c.width !== Math.round(W * dpr()) || c.height !== Math.round(H * dpr())) {
+    c.width = Math.round(W * dpr());
+    c.height = Math.round(H * dpr());
+    c.style.width = W + 'px';
+    c.style.height = H + 'px';
+  }
   const ctx = c.getContext('2d');
-  ctx.scale(dpr(), dpr());
+  ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+  ctx.clearRect(0, 0, W, H);
   if (LV.sample && LV.base) {
     const out = lumaHist(LV.sample, levelsLut(LV));
     let max = 1;
@@ -2910,28 +3007,40 @@ function drawLevels() {
 }
 
 function bindLevels() {
+  // the histogram and the strip under it are one big target: press anywhere
+  // and the nearest point follows (on the point itself, it doesn't jump)
+  const area = $('#levels-area');
   const track = $('#levels-track');
   let drag = null;
-  const valueAt = (x) => ((x - track.getBoundingClientRect().left) / track.getBoundingClientRect().width) * 255;
-  track.addEventListener('pointerdown', (e) => {
+  let offset = 0;
+  const valueAt = (x) => {
+    const r = track.getBoundingClientRect();
+    return ((x - r.left) / r.width) * 255;
+  };
+  area.addEventListener('pointerdown', (e) => {
     if (!LV) return;
     e.preventDefault();
     const v = valueAt(e.clientX);
     const at = { b: LV.b, g: greyAt(LV), w: LV.w };
-    // the handle under the pointer, else the nearest
-    drag = e.target.dataset.h || LV_HANDLES.reduce((a, h) => (Math.abs(at[h] - v) < Math.abs(at[a] - v) ? h : a), 'g');
+    // nearest point; ties (points on top of each other) go the way you can move
+    drag = LV_HANDLES.reduce((a, h) => {
+      const d = Math.abs(at[h] - v) - Math.abs(at[a] - v);
+      return d < -0.5 || (Math.abs(d) <= 0.5 && ((h === 'w' && v > at[h]) || (h === 'b' && v < at[h]))) ? h : a;
+    }, 'g');
+    const px = track.getBoundingClientRect().width / 255;
+    offset = Math.abs(at[drag] - v) * px < 22 ? at[drag] - v : 0; // grabbed the point: keep it under the finger
     LV.sel = drag;
-    track.setPointerCapture(e.pointerId);
-    setLevelsHandle(drag, v);
+    area.setPointerCapture(e.pointerId);
+    setLevelsHandle(drag, v + offset);
   });
-  track.addEventListener('pointermove', (e) => drag && setLevelsHandle(drag, valueAt(e.clientX)));
+  area.addEventListener('pointermove', (e) => drag && setLevelsHandle(drag, valueAt(e.clientX) + offset));
   const end = () => (drag = null);
-  track.addEventListener('pointerup', end);
-  track.addEventListener('pointercancel', end);
+  area.addEventListener('pointerup', end);
+  area.addEventListener('pointercancel', end);
   $('#lv-reset').onclick = () => {
     if (!LV) return;
     Object.assign(LV, LV_NONE);
-    updateLevels();
+    scheduleLevels();
   };
   $('#lv-cancel').onclick = () => closeLevels(false);
   $('#lv-done').onclick = () => closeLevels(true);
@@ -2950,7 +3059,6 @@ function levelsKey(e, k) {
     const at = LV.sel === 'g' ? greyAt(LV) : LV[LV.sel];
     setLevelsHandle(LV.sel, at + step);
   } else if (k === 'r' || k === 'R') $('#lv-reset').click();
-  else if (k === 'z' || k === 'Z') toggleZoom();
   else if (k === 'f' || k === 'F') toggleFullscreen();
   else return false;
   return true;
@@ -3284,7 +3392,7 @@ function bindUi() {
     TL.target = 0;
     animateTimeline();
   };
-  $('#solo-frame').onclick = (e) => toggleZoom(e);
+  $('#solo-frame').onclick = (e) => !LV && toggleZoom(e);
   $('#solo-frame').onmousemove = (e) => {
     if (!S.solo || !S.solo.zoom) return;
     const r = e.currentTarget.getBoundingClientRect();
